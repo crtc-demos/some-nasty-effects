@@ -1,0 +1,185 @@
+.\" -*- nroff -*-
+.\"
+.\" bbcim.
+.\" Copyright (C) 1996 W.H.Scholten.
+.\"
+.\" This program is free; you may redistribute it and/or modified
+.\" versions of it if you give me due credit.
+.\" You may not use part or whole of the source code for any commercial product.
+.\"
+.\" This program is distributed in the hope that it will be useful, but
+.\" WITHOUT ANY WARRANTY; without even the implied warranty of
+.\" MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+.\"
+.\"
+.\" bbcim.1 - nroff -man source for  bbcim  man page.
+.\"
+.\"
+.\"
+.TH bbcim 1 "1 sept/22oct/14 nov 1996/june 1997" "Version 0.95" "Utilities"
+.\"
+.\"------------------------------------------------------------------
+.\"
+.SH NAME
+bbcim - bbc computer file conversion utility
+.\"
+.\"------------------------------------------------------------------
+.\"
+.SH SYNOPSIS
+.B bbcim [options] [file(s)]
+.\"
+.\"------------------------------------------------------------------
+.\"
+.SH DESCRIPTION
+bbcim is a file conversion utility to help in transferring files and for use with emulators (Acorn DFS diskimage manipulation and more)
+.SH USE
+bbcim  option [file [{filelist}]]  (any extension is allowed for diskimages)
+
+options:
+.TP
+.B \-e[s/d,#,b,r] diskimage [{list}]
+extracts files.
+Without the d or s or # the option -e extracts files from a diskimage with filenames like 'imagefile.$.!BOOT'. With every 'bare' file an info file is created containing load- and execution addresses (archive format).
+.B d
+extracts the files in a directory named after the diskimage: eg. 'imagefile/$.ELITE'.
+.B s
+gives short filenames (no leading diskimage name).
+.B #
+removes the bbc root directory $ and glues other directories to the filename. (name clash is possible but unlikely, eg. E.E and EE, in that case you will be asked whether to rename, overwrite, etc.). Note that I've chosen # instead of $ as this is used as a wildcard character in unix.
+.B b
+with this option -e only produces the bare files, and no info files.
+.B r
+removes the diskimage after extracting files.
+
+In all cases a catalogue file 'imagefile.cat' is made except when a list of file names is given, in which case:
+ - only the files in the list are extracted from the disk image
+ - 
+.B r
+is ignored
+(veranderen? naar: alleen dat bestand uit diskbeeld verwijderen (met -d) ?)
+ - a catalogue is not produced.
+.TP
+.B  -c   disk
+show catalogue (files in image).
+.TP
+.B \-40  disk
+expand a diskimage to 40 tracks.
+.TP
+.B \-80  disk
+expand a diskimage to 80 tracks.
+.TP
+.B \-max disk
+expand diskimage to (almost) 256 K.
+.TP
+.B \-min disk
+minimize diskimage (equal to *COMPACT and cutting off after last used sector).
+.TP
+.B \-crc disk
+calculates crc's for all the files in the diskimage.
+.TP
+.B \-new disk
+makes a new (empty) diskimage (512 bytes, bootoption EXEC).
+OBSOLETE (-a creates a new diskimage if needed).
+.TP
+.B \-a[b,r] diskimage {list}
+add files (in archive format) to the diskimage:
+Automatically skips '.inf' files so bbcim -a disk.bbc * (unix) gives no problems. If the diskimage didn't exist a new one will be created. The option 'r' removes the archive files after adding them to the diskimage. the option 'b'
+.I adds files without .inf file (setting load/exec addresses to 0).
+.TP
+.B \-d diskimage {list}
+delete the list of files from the diskimage.
+NOTE: files without a bbcdir are assumed to have the root dir, eg. ELITE is assumed to be $.ELITE
+.TP
+.B \-interss (sd,dd) file0 file1 file2
+interleaves single sided diskimages file0 and file1 to file2.
+.TP
+.B \-splitds (sd,dd) file.2
+splits interleaved diskimage file.2 to file.0 & file.1
+.TP
+.B \-ddos2dfs file.dd
+splits a single sided DDOS diskdump into several DFS diskimages.
+Eg. myfiles.dd > myfilesA.bbc,..., myfilesH.bbc.
+.TP
+.B \-w62dfs file[.ext]
+splits a single sided watford 62 file diskimage into 2 DFS diskimages (one image if there are less than 32 files on the image) file.w1 & file.w2.
+
+.TP
+.B \-x {list}
+xbeeb conversion of archive files in the list.
+.TP
+.B \-s[#] file
+splits a text file with file information into .inf files. Lines not starting with a bbc (DFS) file name (i.e. dir.name) are skipped. The option # removes the DFS directory $ and glues others to the file name. THIS CAN BE USED TO MAKE ARCHIVE FILES FROM AN XBEEB DIRECTORY.
+.TP
+.B \-y {list}
+renames archive/info files to standard format (as produced with # in -e), add's crc's if not found, checks crc's if found.
+.TP
+.B \-icrc {list}
+check crc's of given archive files.
+.TP
+.B \-xcrc
+guess.
+.TP
+.B \-V
+print version no.
+.TP
+.B \-H
+help (command overview). (DUTCH)
+
+
+.SH CURRENT VERSION
+ 0.95
+
+.SH NOTES
+1. options and files can be entered after starting the programs for all options that do not require a file list.
+
+2. for option -d and -e with a list:
+  2.1 wildcards are not possible
+  2.2 names are case sensitive.
+
+3. (see also 2) several files in a diskimage can have the same name when using -a (actually useful to get things back to a beeb, no need to rename).
+
+.SH POSSIBLE FEATURES OF LATER VERSIONS:
+.TP
+.B -e with list, should suboption 'r' remove the extracted files? (using -d)
+.TP
+.B -id : identify diskformat (single/doublesided, dfs/ddos). It's not possible to do this foolproof so I'm not sure.
+.TP
+.B -ren rename, -boot bootoption, -sect nn: custom disksize (for DDOS)
+
+
+
+
+.SH DESCRIPTION OF THE ARCHIVE FORMAT
+(i.e. the standard format for/of files in the bbc archive)
+Complementing the bare bbc file
+.B $.ELITE
+is the info file
+.B $.ELITE.inf
+, a text file containing '$.ELITE   FF0E00 FF8023 Locked CRC=XXXX NEXT $.ELITE2'
+
+The name $.ELITE in the info file is optional but if present the files may be renamed to say a and a.inf and $.ELITE is then the real filename.
+
+A CRC is included for various reasons (to check fileconversion software, serial- or disk- file transfer to/from a bbc, etc.) The CRC is calculated with the algorithm from the BBC user guide p. 399 (The same algorithm as used in the cassettte and rom filing system).
+
+'Locked' may be abbreviated to 'L'.
+
+NEXT may be used for CHAIN"" or *RUN as used on cassette systems. Cassette names are translated to $.cassette_name, (i.e. max 12 chars), otherwise a tape identifier would be needed (e.g. TAPE= at the start of the info file)
+
+file length may be included (after the execution address) but is unnecessary.
+
+i.e.:
+[TAPE=tfs_filename / dfs_filename] loadaddress exec address [locked] crc=xxxx [NEXT name]]
+as tape emulation is only implemented by 6502em (with custom cassette formats?)  and as custom cassette formats should  be possible (eg. ELITE, FORTRESS), the tape section is mostly irrelevant for the moment (useful for preservation of real names though).
+
+
+
+.SH BUGS
+hmm, none?.
+
+.SH AUTHOR
+Wouter Scholten (wouters@cistron.nl)
+
+Web page: http://www.cistron.nl/~wouters
+
+
+

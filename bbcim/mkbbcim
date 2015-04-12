@@ -1,0 +1,4 @@
+# !/bin/sh
+gcc -Wall -o bbcim -O2 -fomit-frame-pointer bbcim.c
+strip bbcim
+
