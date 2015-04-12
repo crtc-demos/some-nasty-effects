@@ -31,7 +31,7 @@ export BBCIM
 
 DEMONAME=chunkydemo
 
-OUTPUTDISK=$(readlink -f tmpdisk)
+OUTPUTDISK="$(readlink -f tmpdisk)"
 
 mkdir -p "$OUTPUTDISK"
 pushd "$OUTPUTDISK"
@@ -42,7 +42,11 @@ export OUTPUTDISK
 
 set -e
 
-cp -f '!boot' '!boot.inf' $OUTPUTDISK
+pushd chunkymode
+./compile.sh
+popd
+
+cp -f '!boot' '!boot.inf' "$OUTPUTDISK"
 
 pushd tmpdisk
 for x in *.inf; do
