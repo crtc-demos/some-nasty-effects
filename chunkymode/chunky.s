@@ -8,29 +8,40 @@ start:
 	lda #2
 	jsr mos_setmode
 	jsr setup
-	lda #19
-	jsr oswrch
-	lda #15
-	jsr oswrch
-	lda #7
-	jsr oswrch
-	lda #0
-	jsr oswrch
-	jsr oswrch
-	jsr oswrch
+	;lda #19
+	;jsr oswrch
+	;lda #15
+	;jsr oswrch
+	;lda #7
+	;jsr oswrch
+	;lda #0
+	;jsr oswrch
+	;jsr oswrch
+	;jsr oswrch
+	jsr initvsync
 	jsr filltest
+stuck:
+	jmp stuck
+	jsr deinit_effect
 	rts
 	.)
 
 	.include "../lib/mos.s"
 
 	; Set CRTC register A to X.
-crtc_write:
+crtc_write_ax:
 	.(
 	sta CRTC_ADDR
 	stx CRTC_DATA
 	rts
 	.)
+
+	.macro crtc_write addr data
+	lda #%addr
+	sta CRTC_ADDR
+	lda %data
+	sta CRTC_DATA
+	.mend
 
 setup
 	.(
@@ -41,26 +52,225 @@ setup
 	eor #$20
 	tax
 	lda #12
-	jsr crtc_write
+	jsr crtc_write_ax
 	lda #13
 	ldx #<SCREENSTART
-	jsr crtc_write
+	jsr crtc_write_ax
 	
 	; scan lines per character
 	lda #9
 	ldx #5
-	jsr crtc_write
+	jsr crtc_write_ax
+
+	; these two retain 304 total lines (50*6 + 4)
+	; vertical total
+	lda #4
+	ldx #50
+	jsr crtc_write_ax
+	
+	; vertical total adjust
+	lda #5
+	ldx #4
+	jsr crtc_write_ax
 	
 	; horizontal displayed
 	lda #1
 	ldx #73
-	jsr crtc_write
+	jsr crtc_write_ax
 	
 	; vertical displayed
 	lda #6
 	ldx #28
-	jsr crtc_write
+	jsr crtc_write_ax
 	
+	; vertical sync position
+	lda #7
+	ldx #44
+	jsr crtc_write_ax
+	
+	rts
+	.)
+
+	.alias switch_point 64*6*6 + 64*8 - 64*2 + 64*6*14 + 34
+
+irq1:
+	.(
+	lda $fc
+	pha
+	
+	; Is it our User VIA timer1 interrupt?
+	lda #64
+	bit USR_IFR
+	bne timer1
+	
+	; Is it our System VIA CA1 interrupt?
+	lda #2
+	bit SYS_IFR
+	bne vsync
+	
+	pla
+	sta $fc
+	jmp (oldirq1v)
+
+timer1
+	; Clear interrupt
+	lda USR_T1C_L
+
+	lda #0b00000111 ^ 4 : sta PALCONTROL
+
+	pla
+	sta $fc
+	rti
+
+vsync
+	; Clear (timer1) interrupt
+	lda USR_T1C_L
+
+	lda #<switch_point
+	sta USR_T1C_L
+	lda #>switch_point
+	sta USR_T1C_H
+
+	; Generate one-shot interrupt
+	lda USR_ACR
+	and #0b00111111
+	;ora #0b01000000
+	sta USR_ACR
+
+	; Clear IFR
+	lda SYS_ORA
+	
+	lda #0b00000111 ^ 1 : sta PALCONTROL
+
+	pla
+	sta $fc
+	rti
+	.)
+
+oldirq1v
+	.word 0
+old_usr_ier
+	.byte 0
+old_sys_ier
+	.byte 0
+old_sys_acr
+	.byte 0
+old_sys_pcr
+	.byte 0
+
+initvsync
+	.(
+	sei
+
+        lda $204
+        ldx $205
+        sta oldirq1v
+        stx oldirq1v+1
+
+        ; Set one-shot mode for timer 1
+        ;lda USR_ACR
+        ;and #$0b00111111
+        ;sta USR_ACR
+        
+	lda USR_IER
+	sta old_usr_ier
+	
+        ; Sys VIA CA1 interrupt
+	lda SYS_PCR
+	sta old_sys_pcr
+	lda #4
+        sta SYS_PCR
+
+	; This removes jitters, but stops the keyboard from working!
+	lda SYS_ACR
+	sta old_sys_acr
+	lda #0
+	sta SYS_ACR
+
+	;lda #15:sta SYS_DDRB
+	;lda #4:sta SYS_ORB:inc a:sta SYS_ORB
+	;lda #3:sta SYS_ORB
+	;lda #$7f:sta SYS_DDRA
+
+        ; Point at IRQ handler
+        lda #<irq1
+        ldx #>irq1
+        sta $204
+        stx $205
+
+	; Enable Usr timer 1 interrupt
+	lda #0b11000000
+	sta USR_IER
+	
+	; Disable USR_IER bits
+	;lda #0b00111111
+	;sta USR_IER
+        
+	lda SYS_IER
+	sta old_sys_ier
+	
+        ; Enable Sys CA1 interrupt.
+        lda #0b10000010
+        sta SYS_IER
+        
+	; Disable Sys CB1, CB2, timer1 interrupts
+	; Note turning off sys timer1 interrupt breaks a lot of stuff!
+	;lda #0b01011000
+	; CB1 & CB2 only
+	lda #0b00011000
+	; or everything!
+	;lda #0b01111101
+	sta SYS_IER
+
+        cli
+	
+        rts
+	.)
+
+deinit_effect
+	.(
+	sei
+	
+	lda oldirq1v
+	sta $204
+	lda oldirq1v+1
+	sta $205
+	
+	lda #$7f
+	sta SYS_IER
+	lda old_sys_ier
+	sta SYS_IER
+	
+	lda old_sys_pcr
+	sta SYS_PCR
+	
+	lda old_sys_acr
+	sta SYS_ACR
+	
+	lda #<1000
+	sta SYS_T1C_L
+	lda #>1000
+	sta SYS_T1C_H
+	
+	lda #<10000
+	sta SYS_T1L_L
+	lda #>10000
+	sta SYS_T1L_H
+	
+	lda #$7f
+	sta USR_IER
+	lda old_usr_ier
+	sta USR_IER
+	
+	@crtc_write 4, {#38}
+	@crtc_write 5, {#0}
+	@crtc_write 6, {#32}
+	@crtc_write 7, {#34}
+	@crtc_write 8, {#0b11000001}
+	@crtc_write 12, {#>[$3000/8]}
+	@crtc_write 13, {#<[$3000/8]}
+	
+	cli
 	rts
 	.)
 
@@ -80,14 +290,14 @@ loop:
 zero:
 	sta (%ptr),y
 
-	pha
-	phx
-	phy
-	lda #19
-	jsr osbyte
-	ply
-	plx
-	pla
+	;pha
+	;phx
+	;phy
+	;lda #19
+	;jsr osbyte
+	;ply
+	;plx
+	;pla
 
 	iny
 	bne loop
