@@ -3,6 +3,8 @@
 	.alias SCREENSTART $7C00
 	.temps $70..$7f
 
+	.alias which_irq $60
+
 start:
 	.(
 	lda #2
@@ -70,7 +72,7 @@ setup
 	
 	; vertical total adjust
 	lda #5
-	ldx #4
+	ldx #0
 	jsr crtc_write_ax
 	
 	; horizontal displayed
@@ -91,7 +93,9 @@ setup
 	rts
 	.)
 
-	.alias switch_point 64*6*6 + 64*8 - 64*2 + 64*6*14 + 34
+	.alias new_frame 64*6*6 - 64*2 + 24
+	.alias shadow_switch 64*6*14 - 64*3
+	.alias mid_2nd_frame 64*6*7
 
 irq1:
 	.(
@@ -116,7 +120,51 @@ timer1
 	; Clear interrupt
 	lda USR_T1C_L
 
+	lda which_irq
+	beq first_after_vsync
+	cmp #1
+	beq second_frame_start
+
+	; This is the middle of the 2nd frame (lower part of the screen).
+	; Set up registers right for it.
+	@crtc_write 4, {#52-14-1}
+	@crtc_write 6, {#14}
+	@crtc_write 7, {#32}
+
+	; disable usr timer1 interrupt
+	lda #0b01000000
+	sta USR_IER
+
+	lda #0b00000111 ^ 5 : sta PALCONTROL
+
+	bra next_irq
+	
+first_after_vsync
+	; We're somewhere at the start of the top frame: make sure registers
+	; are set properly.
+	@crtc_write 4, {#14-1}
+	@crtc_write 6, {#14}
+	@crtc_write 7, {#255}
+
 	lda #0b00000111 ^ 4 : sta PALCONTROL
+
+	bra next_irq
+
+second_frame_start
+	lda #<mid_2nd_frame
+	sta USR_T1C_L
+	lda #>mid_2nd_frame
+	sta USR_T1C_H
+
+	; Screen uses shadow RAM
+	lda ACCCON
+	ora #1
+	sta ACCCON
+
+	lda #0b00000111 ^ 3 : sta PALCONTROL
+
+next_irq
+	inc which_irq
 
 	pla
 	sta $fc
@@ -126,21 +174,38 @@ vsync
 	; Clear (timer1) interrupt
 	lda USR_T1C_L
 
-	lda #<switch_point
+	lda #<new_frame
 	sta USR_T1C_L
-	lda #>switch_point
+	lda #>new_frame
 	sta USR_T1C_H
 
-	; Generate one-shot interrupt
+	lda #<shadow_switch
+	sta USR_T1L_L
+	lda #>shadow_switch
+	sta USR_T1L_H
+
+	; Generate stream of interrupts
 	lda USR_ACR
 	and #0b00111111
-	;ora #0b01000000
+	ora #0b01000000
 	sta USR_ACR
+
+	; Enable usr timer1 interrupt
+	lda #0b11000000
+	sta USR_IER
 
 	; Clear IFR
 	lda SYS_ORA
 	
 	lda #0b00000111 ^ 1 : sta PALCONTROL
+
+	; Screen uses main RAM
+	lda ACCCON
+	and #~1
+	sta ACCCON
+
+	lda #0
+	sta which_irq
 
 	pla
 	sta $fc
