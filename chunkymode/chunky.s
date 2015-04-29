@@ -135,7 +135,7 @@ timer1
 	lda #0b01000000
 	sta USR_IER
 
-	lda #0b00000111 ^ 5 : sta PALCONTROL
+	;lda #0b00000111 ^ 5 : sta PALCONTROL
 
 	bra next_irq
 	
@@ -146,7 +146,7 @@ first_after_vsync
 	@crtc_write 6, {#14}
 	@crtc_write 7, {#255}
 
-	lda #0b00000111 ^ 4 : sta PALCONTROL
+	;lda #0b00000111 ^ 4 : sta PALCONTROL
 
 	bra next_irq
 
@@ -161,7 +161,7 @@ second_frame_start
 	ora #1
 	sta ACCCON
 
-	lda #0b00000111 ^ 3 : sta PALCONTROL
+	;lda #0b00000111 ^ 3 : sta PALCONTROL
 
 next_irq
 	inc which_irq
@@ -197,7 +197,7 @@ vsync
 	; Clear IFR
 	lda SYS_ORA
 	
-	lda #0b00000111 ^ 1 : sta PALCONTROL
+	;lda #0b00000111 ^ 1 : sta PALCONTROL
 
 	; Screen uses main RAM
 	lda ACCCON
@@ -339,9 +339,41 @@ deinit_effect
 	rts
 	.)
 
+which_mem
+	.byte 0
+
+	.alias R 0b00000001
+	.alias G 0b00000100
+	.alias B 0b00010000
+	.alias Y [R|G]
+	.alias M [R|B]
+	.alias C [G|B]
+	.alias W [R|G|B]
+
+amazing_palette
+	.byte 0
+	.byte B << 1
+	.byte B | [B << 1]
+	.byte B | [M << 1]
+	.byte M | [M << 1]
+	.byte M | [W << 1]
+	.byte W | [W << 1]
+	.byte W | [C << 1]
+	.byte C | [C << 1]
+	.byte C | [G << 1]
+	.byte G | [G << 1]
+	.byte G | [Y << 1]
+	.byte Y | [Y << 1]
+	.byte Y | [R << 1]
+	.byte R | [R << 1]
+	.byte R
+
 	.context filltest
 	.var2 ptr
 filltest:
+	lda #0
+	sta which_mem
+repeat:
 	lda #<SCREENSTART
 	sta %ptr
 	lda #>SCREENSTART
@@ -371,6 +403,15 @@ zero:
 	lda %ptr+1
 	cmp #$80
 	bne loop
+	
+	lda ACCCON
+	ora #4
+	sta ACCCON
+	
+	inc which_mem
+	lda which_mem
+	cmp #2
+	bne repeat
 	
 	rts
 	.ctxend
