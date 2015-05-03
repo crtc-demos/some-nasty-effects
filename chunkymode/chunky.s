@@ -7,28 +7,41 @@
 
 start:
 	.(
-	lda #2
+	lda #1
 	jsr mos_setmode
+
+	@load_file_to rings, 0x3000
+
+	lda #BANK0
+	jsr select_sram
+	
+	ldx #<$8000
+	ldy #>$8000
+	lda #64
+	jsr copy_to_sram
+
 	jsr setup
-	;lda #19
-	;jsr oswrch
-	;lda #15
-	;jsr oswrch
-	;lda #7
-	;jsr oswrch
-	;lda #0
-	;jsr oswrch
-	;jsr oswrch
-	;jsr oswrch
+
+	jsr set_palette
+	jsr expand_colour_bytes
+	
 	jsr initvsync
-	jsr filltest
+	jsr plasma_loop
 stuck:
 	jmp stuck
 	jsr deinit_effect
 	rts
 	.)
 
+rings
+	.asc "rings",13
+
 	.include "../lib/mos.s"
+	.include "../lib/sram.s"
+	.include "../lib/srambanks.s"
+	.include "../lib/load.s"
+
+	.include "sintab.s"
 
 	; Set CRTC register A to X.
 crtc_write_ax:
@@ -368,6 +381,95 @@ amazing_palette
 	.byte R | [R << 1]
 	.byte R
 
+	.context set_palette
+
+pal_bytes:
+	.byte $00 | [3 ^ 7]
+	.byte $10 | [3 ^ 7]
+	.byte $20 | [1 ^ 7]
+	.byte $30 | [2 ^ 7]
+	.byte $40 | [6 ^ 7]
+	.byte $50 | [1 ^ 7]
+	.byte $60 | [6 ^ 7]
+	.byte $70 | [2 ^ 7]
+	.byte $80 | [6 ^ 7]
+	.byte $90 | [4 ^ 7]
+	.byte $a0 | [5 ^ 7]
+	.byte $b0 | [5 ^ 7]
+	.byte $c0 | [4 ^ 7]
+	.byte $d0 | [6 ^ 7]
+	.byte $e0 | [6 ^ 7]
+	.byte $f0 | [0 ^ 7]
+	
+set_palette:
+	ldx #15
+loop:
+	lda pal_bytes,x
+	sta PALCONTROL
+	dex
+	bpl loop
+	rts
+	.ctxend
+	
+colour_bytes
+	.byte 255
+	.byte 174
+	.byte 12
+	.byte 8
+	.byte 0
+	.byte 10
+	.byte 15
+	.byte 45
+	.byte 60
+	.byte 56
+	.byte 248
+	.byte 242
+	.byte 216
+	.byte 240
+	.byte 245
+	.byte 255
+
+	.alias exp_colour_bytes $2f00
+
+	.context expand_colour_bytes
+	.var2 outptr
+expand_colour_bytes
+	lda #<exp_colour_bytes
+	sta %outptr
+	lda #>exp_colour_bytes
+	sta %outptr+1
+
+	ldx #0
+loop
+	phx
+	txa
+	and #15
+	tax
+	lda colour_bytes,x
+	plx
+	ldy #0
+loop2
+	sta (%outptr),y
+	iny
+	cpy #8
+	bne loop2
+	
+	lda %outptr
+	clc
+	adc #8
+	sta %outptr
+	.(
+	bcc nohi
+	inc %outptr+1
+nohi:	.)
+
+	inx
+	cpx #32
+	bne loop
+	
+	rts
+	.ctxend
+
 	.context filltest
 	.var2 ptr
 filltest:
@@ -381,10 +483,11 @@ repeat:
 	ldy #0
 loop:
 	tya
-	and #1
-	beq zero
-	lda #$ff
-zero:
+	and #63
+	lsr a
+	lsr a
+	tax
+	lda colour_bytes,x
 	sta (%ptr),y
 
 	;pha
@@ -413,5 +516,161 @@ zero:
 	cmp #2
 	bne repeat
 	
+	rts
+	.ctxend
+
+x_offset
+	.byte 0
+y_offset
+	.byte 0
+ring_topleft
+	.word 0
+
+	.context plasma
+	.var2 rowptr
+	.var xidx, yidx
+	.var tmp, ytmp
+plasma:
+	lda #<SCREENSTART
+	sta %rowptr
+	lda #>SCREENSTART
+	sta %rowptr+1
+	
+	lda ring_topleft
+	sta mod_rings+1
+	lda ring_topleft+1
+	sta mod_rings+2
+	
+	; Non-shadow screen
+	lda ACCCON
+	and #~4
+	sta ACCCON
+	
+	lda #0
+	sta %yidx
+yloop
+	;lda #0
+	;sta %xidx
+	lda %yidx
+	clc
+	adc y_offset
+	tax
+	
+	lda #<sintab
+	clc
+	adc x_offset
+	sec
+	sbc %yidx
+	sta xloop+1
+	lda #>sintab
+	adc #0
+	sta xloop+2
+	
+	ldy #72
+xloop
+	lda sintab,y
+	sbc sintab,y
+mod_rings
+	adc rings,y
+	adc sintab,x
+	sta mod_store+1
+mod_store:
+	lda exp_colour_bytes
+	sta (%rowptr),y
+	dey
+	bpl xloop
+
+	inc %yidx
+	lda %yidx
+	.(
+	cmp #14
+	bne noswitch
+	lda ACCCON
+	ora #4
+	sta ACCCON
+	lda #<SCREENSTART
+	sta %rowptr
+	lda #>SCREENSTART
+	sta %rowptr+1
+	bra done
+noswitch
+	lda %rowptr
+	clc
+	adc #73
+	sta %rowptr
+	bcc done
+	inc %rowptr+1
+done:	.)
+
+	inc mod_rings+2
+
+	lda %yidx
+	cmp #28
+	bne yloop
+	
+	rts
+	.ctxend
+
+ring_x
+	.word 0
+ring_y
+	.word 0
+
+	.context plasma_loop
+	.var2 y_partial
+plasma_loop
+	lda #0
+	sta %y_partial
+	sta %y_partial+1
+repeat
+	lda ring_x
+	clc
+	adc #250
+	sta ring_x
+	.(
+	bcc nohi
+	inc ring_x+1
+nohi:	.)
+
+	lda ring_y
+	clc
+	adc #33
+	sta ring_y
+	lda ring_y+1
+	adc #1
+	sta ring_y+1
+
+	; rings follow lissajous figure.
+	ldx ring_y+1
+	lda sintab,x
+	cmp #$80
+	ror
+	cmp #$80
+	ror
+	cmp #$80
+	ror
+	clc
+	adc #[$80 + 32 - 14]
+	sta ring_topleft+1
+
+	ldx ring_x+1
+	lda sintab,x
+	cmp #$80
+	ror
+	clc
+	adc #[128 - 36]
+	sta ring_topleft
+
+	jsr plasma
+	inc x_offset
+	lda %y_partial
+	sec
+	sbc #84
+	sta %y_partial
+	lda %y_partial+1
+	sbc #0
+	sta %y_partial+1
+	sta y_offset
+	bra repeat
 	rts
 	.ctxend

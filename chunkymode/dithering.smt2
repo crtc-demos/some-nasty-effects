@@ -68,10 +68,10 @@
 (assert (= (select pal (p2 6)) 2))
 (assert (= (select pal (p3 6)) 2))
 
-(assert (= (select pal (p0 7)) 2))
-(assert (= (select pal (p1 7)) 6))
-(assert (= (select pal (p2 7)) 2))
-(assert (= (select pal (p3 7)) 6))
+(assert (= (select pal (p0 7)) 6))
+(assert (= (select pal (p1 7)) 2))
+(assert (= (select pal (p2 7)) 6))
+(assert (= (select pal (p3 7)) 2))
 
 (assert (= (select pal (p0 8)) 6))
 (assert (= (select pal (p1 8)) 6))
@@ -79,23 +79,23 @@
 (assert (= (select pal (p3 8)) 6))
 
 (assert (= (select pal (p0 9)) 6))
-(assert (= (select pal (p1 9)) 4))
+(assert (= (select pal (p1 9)) 6))
 (assert (= (select pal (p2 9)) 6))
 (assert (= (select pal (p3 9)) 4))
 
 (assert (= (select pal (p0 10)) 6))
 (assert (= (select pal (p1 10)) 4))
-(assert (= (select pal (p2 10)) 5))
+(assert (= (select pal (p2 10)) 6))
 (assert (= (select pal (p3 10)) 4))
 
-(assert (= (select pal (p0 11)) 5))
-(assert (= (select pal (p1 11)) 5))
-(assert (= (select pal (p2 11)) 4))
+(assert (= (select pal (p0 11)) 6))
+(assert (= (select pal (p1 11)) 4))
+(assert (= (select pal (p2 11)) 5))
 (assert (= (select pal (p3 11)) 4))
 
 (assert (= (select pal (p0 12)) 5))
 (assert (= (select pal (p1 12)) 4))
-(assert (= (select pal (p2 12)) 4))
+(assert (= (select pal (p2 12)) 1))
 (assert (= (select pal (p3 12)) 4))
 
 (assert (= (select pal (p0 13)) 4))
