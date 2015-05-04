@@ -26,6 +26,7 @@ start:
 	jsr expand_colour_bytes
 	
 	jsr initvsync
+	;jsr filltest
 	jsr plasma_loop
 stuck:
 	jmp stuck
@@ -90,25 +91,36 @@ setup
 	
 	; horizontal displayed
 	lda #1
-	ldx #73
+	ldx #64
 	jsr crtc_write_ax
 	
 	; vertical displayed
 	lda #6
-	ldx #28
+	ldx #32
 	jsr crtc_write_ax
 	
 	; vertical sync position
 	lda #7
-	ldx #44
+	ldx #49
 	jsr crtc_write_ax
+	
+	lda #8
+	ldx #0b00000000
+	jsr crtc_write_ax
+	
+	;lda #154
+	;ldx #0b11011100
+	;jsr osbyte
 	
 	rts
 	.)
 
-	.alias new_frame 64*6*6 - 64*2 + 24
-	.alias shadow_switch 64*6*14 - 64*3
-	.alias mid_2nd_frame 64*6*7
+	.alias char_rows 6
+	.alias half_rows 16
+
+	.alias new_frame 64*char_rows*10 - 64*2 + 24
+	.alias shadow_switch 64*char_rows*half_rows - 64*3
+	.alias mid_2nd_frame 64*char_rows*[half_rows/2]
 
 irq1:
 	.(
@@ -140,9 +152,9 @@ timer1
 
 	; This is the middle of the 2nd frame (lower part of the screen).
 	; Set up registers right for it.
-	@crtc_write 4, {#52-14-1}
-	@crtc_write 6, {#14}
-	@crtc_write 7, {#32}
+	@crtc_write 4, {#52-half_rows-1}
+	@crtc_write 6, {#half_rows}
+	@crtc_write 7, {#26}
 
 	; disable usr timer1 interrupt
 	lda #0b01000000
@@ -155,8 +167,8 @@ timer1
 first_after_vsync
 	; We're somewhere at the start of the top frame: make sure registers
 	; are set properly.
-	@crtc_write 4, {#14-1}
-	@crtc_write 6, {#14}
+	@crtc_write 4, {#half_rows-1}
+	@crtc_write 6, {#half_rows}
 	@crtc_write 7, {#255}
 
 	;lda #0b00000111 ^ 4 : sta PALCONTROL
@@ -566,7 +578,7 @@ yloop
 	adc #0
 	sta xloop+2
 	
-	ldy #72
+	ldy #63
 xloop
 	lda sintab,y
 	sbc sintab,y
@@ -583,7 +595,7 @@ mod_store:
 	inc %yidx
 	lda %yidx
 	.(
-	cmp #14
+	cmp #16
 	bne noswitch
 	lda ACCCON
 	ora #4
@@ -596,7 +608,8 @@ mod_store:
 noswitch
 	lda %rowptr
 	clc
-	adc #73
+	;adc #73
+	adc #64
 	sta %rowptr
 	bcc done
 	inc %rowptr+1
@@ -605,7 +618,7 @@ done:	.)
 	inc mod_rings+2
 
 	lda %yidx
-	cmp #28
+	cmp #32
 	bne yloop
 	
 	rts
@@ -650,7 +663,7 @@ nohi:	.)
 	cmp #$80
 	ror
 	clc
-	adc #[$80 + 32 - 14]
+	adc #[$80 + 32 - 16]
 	sta ring_topleft+1
 
 	ldx ring_x+1
@@ -658,7 +671,7 @@ nohi:	.)
 	cmp #$80
 	ror
 	clc
-	adc #[128 - 36]
+	adc #[128 - 32]
 	sta ring_topleft
 
 	jsr plasma

@@ -48,14 +48,7 @@ popd
 
 cp -f '!boot' '!boot.inf' "$OUTPUTDISK"
 
-pushd tmpdisk
-for x in *.inf; do
-  read name base run < $x
-  basename=$(basename $x .inf)
-  size=$(wc -c $basename | awk '{print $1}')
-  echo $name $base $run $(printf "%x" $size) RWX > $x
-done
-popd
+find . -name "*.inf" -exec ./update-inf.sh {} \;
 
 $BBCIM -new demodisk.ssd
 pushd tmpdisk
