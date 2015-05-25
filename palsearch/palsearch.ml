@@ -395,12 +395,12 @@ let attempt img mixes section xmask flip fast_mode =
   match res with
     Some (p, ht_m, ht_be) ->
       render_attempt p ht_m ~ht_besteffort:ht_be !bytevals section;
-      p, ht_m, ht_be, orig_cols, !bytevals
+      p, ht_m, ht_be, !bytevals
   | None ->
       begin match find_palette orig_cols cols_arr with
         Some (p, ht_m, ht_be) ->
 	  render_attempt p ht_m ~ht_besteffort:ht_be !bytevals section;
-	  p, ht_m, ht_be, orig_cols, !bytevals
+	  p, ht_m, ht_be, !bytevals
       | None -> failwith "1-colour fallback failed"
       end
 
@@ -443,9 +443,32 @@ let _ =
       ignore (Graphics.wait_next_event [Graphics.Button_down])
     done
   done*)
+  let screen_bytes = Bytes.create 20480
+  and output_palettes = Bytes.create 2048 in
   for section = 0 to 127 do
     Printf.printf "Section %d:\n" section;
     flush stdout;
-    ignore (attempt img mixes section !xmask_ref !contrastmix_ref !fastmode_ref)
+    let palette, ht_matched, ht_besteffort, bytevals
+      = attempt img mixes section !xmask_ref !contrastmix_ref !fastmode_ref in
+    let row_start = (section / 4) * 640 + (section mod 4) * 2 in
+    List.iteri
+      (fun idx colours_quad ->
+	let offset = row_start + (idx mod 80) * 8 + (idx / 80) in
+	let byte =
+	  try
+	    Hashtbl.find ht_matched colours_quad
+	  with Not_found ->
+	    Hashtbl.find ht_besteffort colours_quad in
+	screen_bytes.[offset] <- Char.chr byte)
+      (List.rev bytevals);
+    for i = 0 to 15 do
+      output_palettes.[section * 16 + i] <- Char.chr palette.(i)
+    done
   done;
-  ignore (Graphics.wait_next_event [Graphics.Button_down])
+  ignore (Graphics.wait_next_event [Graphics.Button_down]);
+  if !outfile <> "" then begin
+    let f = open_out !outfile in
+    output_string f (Bytes.to_string output_palettes);
+    output_string f (Bytes.to_string screen_bytes);
+    close_out f
+  end

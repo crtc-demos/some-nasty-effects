@@ -46,6 +46,10 @@ pushd chunkymode
 ./compile.sh
 popd
 
+pushd palsearch
+./dcompile.sh
+popd
+
 cp -f '!boot' '!boot.inf' "$OUTPUTDISK"
 
 find . -name "*.inf" -exec ./update-inf.sh {} \;
