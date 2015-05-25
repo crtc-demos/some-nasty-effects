@@ -108,7 +108,7 @@ let calc_distance col1 col2 =
   +. rgb_dist (col_to_rgb p3) (col_to_rgb q3)
   +. rgb_dist (col_to_rgb p4) (col_to_rgb q4)
 
-let find_palette pixel_bytes orig_pixel_bytes =
+let find_palette pixel_bytes all_colours =
   let ctx = mk_context ["model", "true"; "proof", "false"] in
   let mkint n = Arithmetic.Integer.mk_numeral_i ctx n in
   let itype = Arithmetic.Integer.mk_sort ctx
@@ -141,7 +141,8 @@ let find_palette pixel_bytes orig_pixel_bytes =
   match status with
     Solver.SATISFIABLE ->
       Printf.printf "sat\n";
-      let ht = Hashtbl.create 10 in
+      let ht_matched = Hashtbl.create 10
+      and ht_besteffort = Hashtbl.create 10 in
       begin match Solver.get_model solver with
 	Some model ->
 	  let palette = Array.make 16 0 in
@@ -155,20 +156,21 @@ let find_palette pixel_bytes orig_pixel_bytes =
 	    | None -> failwith "Palette eval failed"
 	  done;
 	  let inp_length = List.length pixel_bytes in
-	  let byte_vals = Array.make (List.length orig_pixel_bytes) 0 in
 	  for i = 0 to inp_length - 1 do
 	    let byte_exp = byte_expr ctx pbits itype (mkint i) in
 	    match Model.eval model byte_exp true with
 	      Some num ->
 		let ival = Arithmetic.Integer.get_int num in
+		let cols = lookup_cols palette ival in
 		Printf.printf "  byte val %d: %.2x\n" i ival;
-		byte_vals.(i) <- ival
+		Hashtbl.add ht_matched cols ival
 	    | None -> failwith "Byte eval failed"
 	  done;
-	  let orig_length = List.length orig_pixel_bytes in
-	  if inp_length < orig_length then begin
-	    for i = inp_length to orig_length - 1 do
-	      let orig_cols = List.nth orig_pixel_bytes i in
+	  let total_length = Array.length all_colours in
+	  let unmatched_length = total_length - inp_length in
+	  if unmatched_length > 0 then begin
+	    for i = inp_length to total_length - 1 do
+	      let orig_cols = all_colours.(i) in
 	      let min_dist = ref infinity
 	      and min_cols = ref (-1, -1, -1, -1)
 	      and min_chk = ref (-1) in
@@ -187,11 +189,10 @@ let find_palette pixel_bytes orig_pixel_bytes =
 		    "  byte val %d: %.2x, using (%d,%d,%d,%d) for \
 		     (%d,%d,%d,%d)\n"
 		    i !min_chk a1 a2 a3 a4 a5 a6 a7 a8;
-		  byte_vals.(i) <- !min_chk;
-		  Hashtbl.add ht (a5, a6, a7, a8) (a1, a2, a3, a4)
+		  Hashtbl.add ht_besteffort (a5, a6, a7, a8) !min_chk
 	    done
 	  end;
-	  Some (palette, byte_vals, ht)
+	  Some (palette, ht_matched, ht_besteffort)
       | None -> None
       end
   | Solver.UNSATISFIABLE -> Printf.printf "unsat\n"; None
@@ -292,7 +293,60 @@ let group_list lst =
     [] in
   List.sort (fun (_, n1) (_, n2) -> compare n2 n1) grouped_list
 
-let attempt img mixes section xmask flip =
+let render_attempt palette ht_matched ?ht_besteffort orig_byte_vals section =
+  let bytes_ref = ref (List.rev orig_byte_vals) in
+  for row = 0 to 1 do
+    for bytepos = 0 to 79 do
+      let y = section * 2 + row in
+      let byte = List.hd !bytes_ref in
+      bytes_ref := List.tl !bytes_ref;
+      let c1, c2, c3, c4 = byte in
+      begin try
+        let pixbyte =
+	  try Hashtbl.find ht_matched (c1, c2, c3, c4)
+	  with Not_found as e ->
+	    begin match ht_besteffort with
+	      Some ht -> Hashtbl.find ht (c1, c2, c3, c4)
+	    | None -> raise e
+	    end in
+	let n1, n2, n3, n4 = lookup_cols palette pixbyte in
+	let clist = ref [n1; n2; n3; n4] in
+	for pix = 0 to 3 do
+          let x = bytepos * 4 + pix in
+	  let col = List.hd !clist in
+	  clist := List.tl !clist;
+	  let cr, cg, cb = col_to_rgb col in
+	  Graphics.set_color (Graphics.rgb cr cg cb);
+	  Graphics.fill_rect (x * 2) ((255 - y) * 2 - 1) 2 2
+	done
+      with Not_found ->
+	Graphics.set_color (Graphics.rgb 128 128 128);
+	Graphics.fill_rect (bytepos * 8) ((255 - y) * 2 - 1) 8 2
+      end
+    done
+  done
+
+(* LO_POINT should succeed, HI_POINT should fail. Find the highest point in
+   BYTES_ARR that succeeds.  *)
+
+let find_splitpoint bytes_arr lo_point hi_point best_in
+                    bytevals section =
+  let rec scan lo hi best =
+    let midpt = (lo + hi) / 2 in
+    if lo = hi - 1 || midpt = lo then
+      lo, best
+    else begin
+      let byte_list = Array.to_list (Array.sub bytes_arr 0 (midpt + 1)) in
+      match find_palette byte_list bytes_arr with
+	Some (p, ht_m, ht_be) ->
+	  render_attempt p ht_m bytevals section;
+	  scan midpt hi (Some (p, ht_m, ht_be))
+      | None ->
+          scan lo midpt best
+    end in
+  scan lo_point hi_point best_in
+
+let attempt img mixes section xmask flip fast_mode =
   let bytevals = ref [] in
   for row = 0 to 1 do
     for byte = 0 to 79 do
@@ -321,23 +375,48 @@ let attempt img mixes section xmask flip =
   done;
   let grouped_bytelist = group_list !bytevals in
   let orig_cols = List.map fst grouped_bytelist in
-  let success = ref false in
-  let rec search_down byte_list removed =
-    Printf.printf "Trying with %d unique entries:\n" (List.length byte_list);
+  let cols_arr = Array.of_list orig_cols in
+  let rec search_down lwm hwm best =
+    Printf.printf "Searching %d-%d:\n" lwm hwm;
     flush stdout;
-    match find_palette byte_list orig_cols, removed with
-      Some (p, b, ht), [] -> p, b, ht, orig_cols, !bytevals
-    | Some (p, b, _), _::remlist ->
-        search_down (byte_list @ (List.rev remlist)) []
-    | None, remlist ->
-        begin match List.rev byte_list with
-	  q::qs -> search_down (List.rev qs) (q::removed)
-	| [] -> failwith "Hmm."
-	end in
-  search_down orig_cols []
+    let splitpt, res
+      = find_splitpoint cols_arr lwm hwm best !bytevals section in
+    let len = Array.length cols_arr - splitpt - 2 in
+    if len > 0 then begin
+      let deleted = cols_arr.(splitpt + 1) in
+      Array.blit cols_arr (splitpt + 2) cols_arr (splitpt + 1) len;
+      cols_arr.(Array.length cols_arr - 1) <- deleted
+    end;
+    if splitpt + 1 < hwm && not fast_mode then
+      search_down splitpt (hwm - 1) res
+    else
+      res in
+  let res = search_down 1 (Array.length cols_arr) None in
+  match res with
+    Some (p, ht_m, ht_be) ->
+      render_attempt p ht_m ~ht_besteffort:ht_be !bytevals section;
+      p, ht_m, ht_be, orig_cols, !bytevals
+  | None ->
+      begin match find_palette orig_cols cols_arr with
+        Some (p, ht_m, ht_be) ->
+	  render_attempt p ht_m ~ht_besteffort:ht_be !bytevals section;
+	  p, ht_m, ht_be, orig_cols, !bytevals
+      | None -> failwith "1-colour fallback failed"
+      end
 
 let _ =
-  let img = Images.load Sys.argv.(1) [] in
+  let xmask_ref = ref 0
+  and fastmode_ref = ref false
+  and contrastmix_ref = ref false
+  and inputfile = ref ""
+  and outfile = ref "" in
+  let argspec =
+    ["-xmask", Arg.Set_int xmask_ref, "Set xmask for reading source image";
+     "-fast", Arg.Set fastmode_ref, "Fast mode (stop search after first match)";
+     "-contrastmix", Arg.Set contrastmix_ref, "Use high-constrast colour mixes";
+     "-o", Arg.Set_string outfile, "Set output file name"] in
+  Arg.parse argspec (fun inp -> inputfile := inp) "Usage: palsearch [opts]";
+  let img = Images.load !inputfile [] in
   Graphics.open_graph "";
   Graphics.set_window_title "Palette search";
   Graphics.resize_window 640 512;
@@ -367,40 +446,6 @@ let _ =
   for section = 0 to 127 do
     Printf.printf "Section %d:\n" section;
     flush stdout;
-    let palette, byte_arr, ht, orig_cols, orig_byte_vals
-      = attempt img mixes section 0 false in
-    let bytes_ref = ref (List.rev orig_byte_vals) in
-    for row = 0 to 1 do
-      for bytepos = 0 to 79 do
-        let y = section * 2 + row in
-	let byte = List.hd !bytes_ref in
-	bytes_ref := List.tl !bytes_ref;
-	let c1, c2, c3, c4 = byte in
-	let c1, c2, c3, c4 = begin try
-	  let n1, n2, n3, n4 = Hashtbl.find ht (c1, c2, c3, c4) in
-	  Printf.printf "substituted (%d,%d,%d,%d) for (%d,%d,%d,%d)\n"
-			n1 n2 n3 n4 c1 c2 c3 c4;
-	  n1, n2, n3, n4
-	with Not_found -> c1, c2, c3, c4 end in
-	let clist = ref [c1; c2; c3; c4] in
-	for pix = 0 to 3 do
-          let x = bytepos * 4 + pix in
-	  let col = List.hd !clist in
-	  clist := List.tl !clist;
-	  let cr, cg, cb = col_to_rgb col in
-	  Graphics.set_color (Graphics.rgb cr cg cb);
-	  Graphics.fill_rect (x * 2) ((255 - y) * 2 - 1) 2 2
-	done
-      done
-    done
-    (*let good = good || attempt img mixes section 1 false in
-    let good = good || attempt img mixes section 3 false in
-    let good = good || attempt img mixes section 1 true in
-    let good = good || attempt img mixes section 3 true in*)
-    (*match good with
-      None ->
-	Graphics.set_color (Graphics.rgb 128 128 128);
-	Graphics.fill_rect 0 ((127 - section) * 4 - 1) 640 4
-    | Some _ -> ()*)
+    ignore (attempt img mixes section !xmask_ref !contrastmix_ref !fastmode_ref)
   done;
   ignore (Graphics.wait_next_event [Graphics.Button_down])
