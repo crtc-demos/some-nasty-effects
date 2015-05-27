@@ -45,6 +45,8 @@ let rnd_palette =
     7, 6, 5, 4
   ]
 
+let chunksize = 2
+
 let pal_bit ctx pbits itype bitno entry =
   let mkint n = Arithmetic.Integer.mk_numeral_i ctx n in
   let zero = mkint 0 in
@@ -265,14 +267,20 @@ let ordered_dither x y r g b =
   (if g + offset > 127 then 255 else 0),
   (if b + offset > 127 then 255 else 0)
 
-let ordered_dither_2 mix_arr x y r g b flip =
+let select_from altlist nth =
+  List.nth altlist (min nth (List.length altlist - 1))
+
+let ordered_dither_2 mix_arr x y r g b mixno =
   let dx = x land 1 and dy = y land 1 in
   let r' = r / 52 and g' = g / 52 and b' = b / 52 in
   let idx = b' * 25 + g' * 5 + r' in
-  let (_, col_list) =
-    if flip then List.hd (List.rev mix_arr.(idx)) else List.hd mix_arr.(idx) in
+  let (_, col_list) = select_from mix_arr.(idx) mixno in
   let offset = [| 0; 3; 2; 1 |] in
   List.nth col_list offset.(dy * 2 + dx)
+
+let closest_colour r g b =
+  let r' = r / 128 and g' = g / 128 and b' = b / 128 in
+  r' lor (g' lsl 1) lor (b' lsl 2)
 
 let clamp x =
   if x < 0 then 0 else if x > 255 then 255 else x
@@ -295,9 +303,9 @@ let group_list lst =
 
 let render_attempt palette ht_matched ?ht_besteffort orig_byte_vals section =
   let bytes_ref = ref (List.rev orig_byte_vals) in
-  for row = 0 to 1 do
+  for row = 0 to chunksize - 1 do
     for bytepos = 0 to 79 do
-      let y = section * 2 + row in
+      let y = section * chunksize + row in
       let byte = List.hd !bytes_ref in
       bytes_ref := List.tl !bytes_ref;
       let c1, c2, c3, c4 = byte in
@@ -346,22 +354,89 @@ let find_splitpoint bytes_arr lo_point hi_point best_in
     end in
   scan lo_point hi_point best_in
 
-let attempt img mixes section xmask flip fast_mode =
+let attempt img mixes section xmask randomness mixno fast_mode these_errors_r
+	    these_errors_g these_errors_b next_errors_r next_errors_g
+	    next_errors_b ~random_dither ~plain_fs =
+  let r_randomness = (randomness * 54) / 256
+  and g_randomness = (randomness * 183) / 256
+  and b_randomness = (randomness * 18) / 256 in
   let bytevals = ref [] in
-  for row = 0 to 1 do
+  for row = 0 to chunksize - 1 do
     for byte = 0 to 79 do
       let pixlist = ref [] in
       for pix = 0 to 3 do
 	let x = byte * 4 + pix
-	and y = section * 2 + row in
-	let col = get_rgb img (x land (lnot xmask)) y
-	and bias_r = (Random.int 32) - 16
-	and bias_g = (Random.int 8) - 4
-	and bias_b = (Random.int 64) - 32 in
-	let cr = clamp (col.Color.Rgb.r + bias_r)
-	and cg = clamp (col.Color.Rgb.g + bias_g)
-	and cb = clamp (col.Color.Rgb.b + bias_b) in
-	let dithered = ordered_dither_2 mixes x y cr cg cb flip in
+	and y = section * chunksize + row in
+	let col = get_rgb img (x land (lnot xmask)) y in
+	let cr, cg, cb =
+	  if random_dither then begin
+	    let bias_r =
+	      if r_randomness > 0 then
+		(Random.int r_randomness) - r_randomness / 2
+	      else 0
+	    and bias_g =
+	      if g_randomness > 0 then
+		(Random.int g_randomness) - g_randomness / 2
+	      else 0
+	    and bias_b =
+	      if b_randomness > 0 then
+		(Random.int b_randomness) - b_randomness / 2 
+	      else 0 in
+	    let cr = clamp (col.Color.Rgb.r + bias_r)
+	    and cg = clamp (col.Color.Rgb.g + bias_g)
+	    and cb = clamp (col.Color.Rgb.b + bias_b) in
+	    cr, cg, cb
+	  end else begin
+	    let this_r =
+	      clamp (col.Color.Rgb.r + int_of_float these_errors_r.(x))
+	    and this_g =
+	      clamp (col.Color.Rgb.g + int_of_float these_errors_g.(x))
+	    and this_b =
+	      clamp (col.Color.Rgb.b + int_of_float these_errors_b.(x)) in
+	    let selected_r, selected_g, selected_b =
+	      if not plain_fs then
+	        (this_r / 52) * 52,
+		(this_g / 52) * 52,
+		(this_b / 52) * 52
+	      else
+	        (if this_r < 128 then 0 else 255),
+		(if this_g < 128 then 0 else 255),
+		(if this_b < 128 then 0 else 255) in
+	    let error_r = float_of_int (this_r - selected_r)
+	    and error_g = float_of_int (this_g - selected_g)
+	    and error_b = float_of_int (this_b - selected_b) in
+	    if x < 319 then begin
+	      these_errors_r.(x + 1) <- these_errors_r.(x + 1)
+				      +. error_r *. 7.0 /. 16.0;
+	      these_errors_g.(x + 1) <- these_errors_g.(x + 1)
+				      +. error_g *. 7.0 /. 16.0;
+	      these_errors_b.(x + 1) <- these_errors_b.(x + 1)
+				      +. error_b *. 7.0 /. 16.0;
+	      next_errors_r.(x + 1) <- next_errors_r.(x + 1)
+				       +. error_r *. 1.0 /. 16.0;
+	      next_errors_g.(x + 1) <- next_errors_g.(x + 1)
+				       +. error_g *. 1.0 /. 16.0;
+	      next_errors_b.(x + 1) <- next_errors_b.(x + 1)
+				       +. error_b *. 1.0 /. 16.0
+	    end;
+	    if x > 0 then begin
+	      next_errors_r.(x - 1) <- next_errors_r.(x - 1)
+				       +. error_r *. 3.0 /. 16.0;
+	      next_errors_g.(x - 1) <- next_errors_g.(x - 1)
+				       +. error_g *. 3.0 /. 16.0;
+	      next_errors_b.(x - 1) <- next_errors_b.(x - 1)
+				       +. error_b *. 3.0 /. 16.0
+	    end;
+	    next_errors_r.(x) <- next_errors_r.(x)
+				 +. error_r *. 5.0 /. 16.0;
+	    next_errors_g.(x) <- next_errors_g.(x)
+				 +. error_g *. 5.0 /. 16.0;
+	    next_errors_b.(x) <- next_errors_b.(x)
+				 +. error_b *. 5.0 /. 16.0;
+	    (this_r, this_g, this_b)
+	  end in
+	let dithered = if plain_fs then closest_colour cr cg cb
+		       else ordered_dither_2 mixes x y cr cg cb mixno in
 	let cr, cg, cb = col_to_rgb dithered in
 	Graphics.set_color (Graphics.rgb cr cg cb);
 	Graphics.fill_rect (x * 2) ((255 - y) * 2 - 1) 2 2;
@@ -371,7 +446,13 @@ let attempt img mixes section xmask flip fast_mode =
 	[a; b; c; d] ->
 	  bytevals := (a, b, c, d) :: !bytevals
       | _ -> failwith "Wrong list length"
-    done
+    done;
+    Array.blit next_errors_r 0 these_errors_r 0 320;
+    Array.blit next_errors_g 0 these_errors_g 0 320;
+    Array.blit next_errors_b 0 these_errors_b 0 320;
+    Array.fill next_errors_r 0 320 0.0;
+    Array.fill next_errors_g 0 320 0.0;
+    Array.fill next_errors_b 0 320 0.0;
   done;
   let grouped_bytelist = group_list !bytevals in
   let orig_cols = List.map fst grouped_bytelist in
@@ -407,13 +488,17 @@ let attempt img mixes section xmask flip fast_mode =
 let _ =
   let xmask_ref = ref 0
   and fastmode_ref = ref false
-  and contrastmix_ref = ref false
+  and dither_ref = ref "ordered"
+  and mixno_ref = ref 0
+  and randomness_ref = ref 64
   and inputfile = ref ""
   and outfile = ref "" in
   let argspec =
     ["-xmask", Arg.Set_int xmask_ref, "Set xmask for reading source image";
      "-fast", Arg.Set fastmode_ref, "Fast mode (stop search after first match)";
-     "-contrastmix", Arg.Set contrastmix_ref, "Use high-constrast colour mixes";
+     "-dither", Arg.Set_string dither_ref, "Dither type (fs, ordered, ord+fs)";
+     "-mixno", Arg.Set_int mixno_ref, "Use next-higher contrast mixes";
+     "-random", Arg.Set_int randomness_ref, "Amount of randomness (def. 64)";
      "-o", Arg.Set_string outfile, "Set output file name"] in
   Arg.parse argspec (fun inp -> inputfile := inp) "Usage: palsearch [opts]";
   let img = Images.load !inputfile [] in
@@ -443,13 +528,30 @@ let _ =
       ignore (Graphics.wait_next_event [Graphics.Button_down])
     done
   done*)
+  let random_dither, plain_fs =
+    match !dither_ref with
+      "ordered" -> true, false
+    | "fs" -> false, true
+    | "ord+fs" -> false, false
+    | x ->
+	Printf.fprintf stderr "Bad dither type '%s'\n" x;
+	exit 1 in
   let screen_bytes = Bytes.create 20480
   and output_palettes = Bytes.create 2048 in
-  for section = 0 to 127 do
+  let these_errors_r = Array.create 320 0.0
+  and these_errors_g = Array.create 320 0.0
+  and these_errors_b = Array.create 320 0.0
+  and next_errors_r = Array.create 320 0.0
+  and next_errors_g = Array.create 320 0.0
+  and next_errors_b = Array.create 320 0.0 in
+  for section = 0 to (256 / chunksize) - 1 do
     Printf.printf "Section %d:\n" section;
     flush stdout;
     let palette, ht_matched, ht_besteffort, bytevals
-      = attempt img mixes section !xmask_ref !contrastmix_ref !fastmode_ref in
+      = attempt img mixes section !xmask_ref !randomness_ref !mixno_ref
+		!fastmode_ref these_errors_r these_errors_g these_errors_b
+		next_errors_r next_errors_g next_errors_b ~random_dither
+		~plain_fs in
     let row_start = (section / 4) * 640 + (section mod 4) * 2 in
     List.iteri
       (fun idx colours_quad ->
