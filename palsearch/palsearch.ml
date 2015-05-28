@@ -110,7 +110,7 @@ let calc_distance col1 col2 =
   +. rgb_dist (col_to_rgb p3) (col_to_rgb q3)
   +. rgb_dist (col_to_rgb p4) (col_to_rgb q4)
 
-let find_palette pixel_bytes all_colours =
+let find_palette pixel_bytes all_colours cols_histo badness_out =
   let ctx = mk_context ["model", "true"; "proof", "false"] in
   let mkint n = Arithmetic.Integer.mk_numeral_i ctx n in
   let itype = Arithmetic.Integer.mk_sort ctx
@@ -189,8 +189,10 @@ let find_palette pixel_bytes all_colours =
 	        (a1, a2, a3, a4), (a5, a6, a7, a8) ->
 		  Printf.printf
 		    "  byte val %d: %.2x, using (%d,%d,%d,%d) for \
-		     (%d,%d,%d,%d)\n"
-		    i !min_chk a1 a2 a3 a4 a5 a6 a7 a8;
+		     (%d,%d,%d,%d) [* %d, badness %f]\n"
+		    i !min_chk a1 a2 a3 a4 a5 a6 a7 a8 cols_histo.(i)
+		    !min_dist;
+		  badness_out.(i) <- !min_dist;
 		  Hashtbl.add ht_besteffort (a5, a6, a7, a8) !min_chk
 	    done
 	  end;
@@ -337,7 +339,7 @@ let render_attempt palette ht_matched ?ht_besteffort orig_byte_vals section =
 (* LO_POINT should succeed, HI_POINT should fail. Find the highest point in
    BYTES_ARR that succeeds.  *)
 
-let find_splitpoint bytes_arr lo_point hi_point best_in
+let find_splitpoint bytes_arr hist_arr badness_arr lo_point hi_point best_in
                     bytevals section =
   let rec scan lo hi best =
     let midpt = (lo + hi) / 2 in
@@ -345,7 +347,7 @@ let find_splitpoint bytes_arr lo_point hi_point best_in
       lo, best
     else begin
       let byte_list = Array.to_list (Array.sub bytes_arr 0 (midpt + 1)) in
-      match find_palette byte_list bytes_arr with
+      match find_palette byte_list bytes_arr hist_arr badness_arr with
 	Some (p, ht_m, ht_be) ->
 	  render_attempt p ht_m bytevals section;
 	  scan midpt hi (Some (p, ht_m, ht_be))
@@ -456,29 +458,50 @@ let attempt img mixes section xmask randomness mixno fast_mode these_errors_r
   done;
   let grouped_bytelist = group_list !bytevals in
   let orig_cols = List.map fst grouped_bytelist in
-  let cols_arr = Array.of_list orig_cols in
+  let cols_arr = Array.of_list orig_cols
+  and hist_arr = Array.of_list (List.map snd grouped_bytelist) in
+  let num_cols = Array.length cols_arr in
+  let badness_arr = Array.make num_cols 0.0 in
   let rec search_down lwm hwm best =
     Printf.printf "Searching %d-%d:\n" lwm hwm;
     flush stdout;
     let splitpt, res
-      = find_splitpoint cols_arr lwm hwm best !bytevals section in
-    let len = Array.length cols_arr - splitpt - 2 in
+      = find_splitpoint cols_arr hist_arr badness_arr lwm hwm best !bytevals
+			section in
+    let len = num_cols - splitpt - 2 in
     if len > 0 then begin
-      let deleted = cols_arr.(splitpt + 1) in
+      let deleted = cols_arr.(splitpt + 1)
+      and deleted_hist = hist_arr.(splitpt + 1) in
       Array.blit cols_arr (splitpt + 2) cols_arr (splitpt + 1) len;
-      cols_arr.(Array.length cols_arr - 1) <- deleted
+      Array.blit hist_arr (splitpt + 2) hist_arr (splitpt + 1) len;
+      cols_arr.(num_cols - 1) <- deleted;
+      hist_arr.(num_cols - 1) <- deleted_hist
     end;
-    if splitpt + 1 < hwm && not fast_mode then
+    if splitpt + 1 < hwm && not fast_mode then begin
+      let sublength = hwm - splitpt - 1 in
+      let subarr = Array.init sublength
+        (fun i -> cols_arr.(i + splitpt + 1), hist_arr.(i + splitpt + 1),
+		  badness_arr.(i + splitpt + 1)) in
+      Array.sort
+        (fun (_, h1, b1) (_, h2, b2) ->
+	  compare (float_of_int h2 *. b2) (float_of_int h1 *. b1))
+	subarr;
+      for i = 0 to sublength - 1 do
+        match subarr.(i) with
+	  c1, h1, b1 ->
+            cols_arr.(i + splitpt + 1) <- c1;
+	    hist_arr.(i + splitpt + 1) <- h1
+      done;
       search_down splitpt (hwm - 1) res
-    else
+    end else
       res in
-  let res = search_down 1 (Array.length cols_arr) None in
+  let res = search_down 1 num_cols None in
   match res with
     Some (p, ht_m, ht_be) ->
       render_attempt p ht_m ~ht_besteffort:ht_be !bytevals section;
       p, ht_m, ht_be, !bytevals
   | None ->
-      begin match find_palette orig_cols cols_arr with
+      begin match find_palette orig_cols cols_arr hist_arr badness_arr with
         Some (p, ht_m, ht_be) ->
 	  render_attempt p ht_m ~ht_besteffort:ht_be !bytevals section;
 	  p, ht_m, ht_be, !bytevals
