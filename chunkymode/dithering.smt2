@@ -93,10 +93,14 @@
 (assert (= (select pal (p2 11)) 5))
 (assert (= (select pal (p3 11)) 4))
 
-(assert (= (select pal (p0 12)) 5))
-(assert (= (select pal (p1 12)) 4))
-(assert (= (select pal (p2 12)) 1))
-(assert (= (select pal (p3 12)) 4))
+(assert (or (and (= (select pal (p0 12)) 5)
+        	 (= (select pal (p1 12)) 4)
+        	 (= (select pal (p2 12)) 1)
+		 (= (select pal (p3 12)) 4))
+            (and (= (select pal (p0 12)) 1)
+        	 (= (select pal (p1 12)) 4)
+        	 (= (select pal (p2 12)) 5)
+		 (= (select pal (p3 12)) 4))))
 
 (assert (= (select pal (p0 13)) 4))
 (assert (= (select pal (p1 13)) 4))
