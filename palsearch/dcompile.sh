@@ -1,3 +1,4 @@
 #!/bin/sh
 set -e
-cp -r dump dump.inf frogdump frogdump.inf parrotdump parrotdump.inf "$OUTPUTDISK"
+pasta showimage.s -o showimg
+cp -r showimg showimg.inf dump dump.inf frgdmp2 frgdmp2.inf "$OUTPUTDISK"

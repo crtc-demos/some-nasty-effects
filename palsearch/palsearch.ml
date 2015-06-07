@@ -24,64 +24,25 @@ let rainbow_palette =
     0,0,0,0
   ]
 
-let rnd_palette =
-  [
-    0, 0, 0, 0;
-    0, 1, 0, 1;
-    1, 0, 1, 0;
-    1, 1, 1, 1;
-    1, 2, 1, 2;
-    2, 1, 2, 1;
-    2, 2, 2, 2;
-    2, 3, 2, 3;
-    3, 2, 3, 2;
-    3, 3, 3, 3;
-    3, 4, 3, 4;
-    4, 3, 4, 3;
-    4, 4, 4, 4;
-    4, 5, 4, 5;
-    5, 4, 5, 4;
-    5, 5, 5, 5;
-    5, 1, 2, 3;
-    5, 0, 0, 0;
-    4, 3, 2, 1;
-    1, 2, 3, 4;
-    4, 5, 6, 7;
-    7, 6, 5, 4
-  ]
-
 let chunksize = 2
+let change_per_row = 9
 
-let pal_bit ctx pbits itype bitno entry =
-  let mkint n = Arithmetic.Integer.mk_numeral_i ctx n in
-  let zero = mkint 0 in
-  let rec build_operands tap bitval lst =
-    if bitval = 0 then
+let pal_bit ctx pixels itype bv4type bitno entry =
+  let rec build_operands tap bitno lst =
+    if bitno = 4 then
       lst
     else
       let new_op =
 	if tap >= 0 then
-	  Boolean.mk_ite ctx (Z3Array.mk_select ctx pbits.(tap) entry)
-		  (mkint bitval) zero
+	  BitVector.mk_extract ctx tap tap (Z3Array.mk_select ctx pixels entry)
 	else
-	  mkint bitval in
-      build_operands (tap - 2) (bitval lsr 1) (new_op::lst) in
-  let ops = build_operands (7 - bitno) 8 [] in
-  Arithmetic.mk_add ctx ops
-
-let byte_expr ctx pbits itype entry =
-  let mkint n = Arithmetic.Integer.mk_numeral_i ctx n in
-  let zero = mkint 0 in
-  let rec build_operands tap bitval lst =
-    if bitval = 0 then
-      lst
-    else
-      let new_op =
-        Boolean.mk_ite ctx (Z3Array.mk_select ctx pbits.(tap) entry)
-		       (mkint bitval) zero in
-      build_operands (pred tap) (bitval lsr 1) (new_op::lst) in
-  let ops = build_operands 7 128 [] in
-  Arithmetic.mk_add ctx ops
+	  BitVector.mk_numeral ctx "1" 1 in
+      build_operands (tap - 2) (succ bitno) (new_op::lst) in
+  let rec concat_list = function
+    [] -> failwith "Not enough things to concat"
+  | [a] -> a
+  | a::rest -> BitVector.mk_concat ctx a (concat_list rest) in
+  concat_list (List.rev (build_operands (7 - bitno) 0 []))
 
 let lookup_cols palette byte =
   let rec tap byte =
@@ -115,35 +76,53 @@ let calc_distance col1 col2 =
   +. rgb_dist (col_to_rgb p3) (col_to_rgb q3)
   +. rgb_dist (col_to_rgb p4) (col_to_rgb q4)
 
-let find_palette pixel_bytes all_colours cols_histo badness_out =
+let find_palette pixel_bytes all_colours cols_histo badness_out
+		 previous_palette =
   let ctx = mk_context ["model", "true"; "proof", "false"] in
-  let mkint n = Arithmetic.Integer.mk_numeral_i ctx n in
+  let mkint n = Arithmetic.Integer.mk_numeral_i ctx n
+  and mkbvint n = BitVector.mk_numeral ctx (string_of_int n) 4 in
   let itype = Arithmetic.Integer.mk_sort ctx
-  and btype = Boolean.mk_sort ctx in
-  let pal_sym = Symbol.mk_string ctx "pal" in
-  let pal = Z3Array.mk_const ctx pal_sym itype itype in
-  let pbits = Array.map
-    (fun nm -> Z3Array.mk_const_s ctx nm itype btype)
-    [| "a"; "b"; "c"; "d"; "e"; "f"; "g"; "h" |] in
+  and bv4type = BitVector.mk_sort ctx 4
+  and bv8type = BitVector.mk_sort ctx 8 in
+  let pal = Z3Array.mk_const_s ctx "pal" bv4type bv4type in
+  let pixels = Z3Array.mk_const_s ctx "pixels" itype bv8type in
   let solver = Solver.mk_solver_s ctx "smt" in
   ignore (List.fold_right
     (fun (c0, c1, c2, c3) num ->
       let num_exp = mkint num in
-      let p0_idx = pal_bit ctx pbits itype 0 num_exp in
-      let p1_idx = pal_bit ctx pbits itype 1 num_exp in
-      let p2_idx = pal_bit ctx pbits itype 2 num_exp in
-      let p3_idx = pal_bit ctx pbits itype 3 num_exp in
+      let p0_idx = pal_bit ctx pixels itype bv4type 0 num_exp in
+      let p1_idx = pal_bit ctx pixels itype bv4type 1 num_exp in
+      let p2_idx = pal_bit ctx pixels itype bv4type 2 num_exp in
+      let p3_idx = pal_bit ctx pixels itype bv4type 3 num_exp in
       let p0 = Z3Array.mk_select ctx pal p0_idx in
       let p1 = Z3Array.mk_select ctx pal p1_idx in
       let p2 = Z3Array.mk_select ctx pal p2_idx in
       let p3 = Z3Array.mk_select ctx pal p3_idx in
-      Solver.add solver [Boolean.mk_eq ctx p0 (mkint c0);
-			 Boolean.mk_eq ctx p1 (mkint c1);
-			 Boolean.mk_eq ctx p2 (mkint c2);
-			 Boolean.mk_eq ctx p3 (mkint c3)];
+      Solver.add solver [Boolean.mk_eq ctx p0 (mkbvint c0);
+			 Boolean.mk_eq ctx p1 (mkbvint c1);
+			 Boolean.mk_eq ctx p2 (mkbvint c2);
+			 Boolean.mk_eq ctx p3 (mkbvint c3)];
       succ num)
     pixel_bytes
     0);
+  begin match previous_palette with
+    None -> ()
+  | Some prev_pal ->
+      let i0 = mkint 0 and i1 = mkint 1 in
+      let _, oplist = Array.fold_left
+        (fun (idx, oplist) ent ->
+	  let op =
+	    Boolean.mk_ite ctx
+	      (Boolean.mk_eq ctx
+		(Z3Array.mk_select ctx pal (mkbvint idx))
+		(mkbvint ent))
+	      i1 i0 in
+	  (succ idx, op::oplist))
+	(0, [])
+	prev_pal in
+      let sum = Arithmetic.mk_add ctx oplist in
+      Solver.add solver [Arithmetic.mk_ge ctx sum (mkint (16 - change_per_row))]
+  end;
   let status = Solver.check solver [] in
   match status with
     Solver.SATISFIABLE ->
@@ -153,22 +132,22 @@ let find_palette pixel_bytes all_colours cols_histo badness_out =
 	Some model ->
 	  let palette = Array.make 16 0 in
 	  for i = 0 to 15 do
-	    let pal_exp = Z3Array.mk_select ctx pal (mkint i) in
+	    let pal_exp = Z3Array.mk_select ctx pal (mkbvint i) in
 	    match Model.eval model pal_exp true with
 	      Some num ->
-		let ival = Arithmetic.Integer.get_int num in
-		Printf.printf "  palette entry %d: %x\n" i ival;
+		let ival = BitVector.get_int num in
+		(*Printf.printf "  palette entry %d: %x\n" i ival;*)
 		palette.(i) <- ival
 	    | None -> failwith "Palette eval failed"
 	  done;
 	  let inp_length = List.length pixel_bytes in
 	  for i = 0 to inp_length - 1 do
-	    let byte_exp = byte_expr ctx pbits itype (mkint i) in
+	    let byte_exp = Z3Array.mk_select ctx pixels (mkint i) in
 	    match Model.eval model byte_exp true with
 	      Some num ->
-		let ival = Arithmetic.Integer.get_int num in
+		let ival = BitVector.get_int num in
 		let cols = lookup_cols palette ival in
-		Printf.printf "  byte val %d: %.2x\n" i ival;
+		(*Printf.printf "  byte val %d: %.2x\n" i ival;*)
 		Hashtbl.add ht_matched cols ival
 	    | None -> failwith "Byte eval failed"
 	  done;
@@ -191,11 +170,11 @@ let find_palette pixel_bytes all_colours cols_histo badness_out =
 	      done;
 	      match !min_cols, orig_cols with
 	        (a1, a2, a3, a4), (a5, a6, a7, a8) ->
-		  Printf.printf
+		  (*Printf.printf
 		    "  byte val %d: %.2x, using (%d,%d,%d,%d) for \
 		     (%d,%d,%d,%d) [* %d, badness %f]\n"
 		    i !min_chk a1 a2 a3 a4 a5 a6 a7 a8 cols_histo.(i)
-		    !min_dist;
+		    !min_dist;*)
 		  badness_out.(i) <- !min_dist;
 		  Hashtbl.add ht_besteffort (a5, a6, a7, a8) !min_chk
 	    done
@@ -208,31 +187,30 @@ let find_palette pixel_bytes all_colours cols_histo badness_out =
 
 let find_palette2 pixel_byte_alts =
   let ctx = mk_context ["model", "true"; "proof", "false"] in
-  let mkint n = Arithmetic.Integer.mk_numeral_i ctx n in
+  let mkint n = Arithmetic.Integer.mk_numeral_i ctx n
+  and mkbvint n = BitVector.mk_numeral ctx (string_of_int n) 4 in
   let itype = Arithmetic.Integer.mk_sort ctx
-  and btype = Boolean.mk_sort ctx in
-  let pal_sym = Symbol.mk_string ctx "pal" in
-  let pal = Z3Array.mk_const ctx pal_sym itype itype in
-  let pbits = Array.map
-    (fun nm -> Z3Array.mk_const_s ctx nm itype btype)
-    [| "a"; "b"; "c"; "d"; "e"; "f"; "g"; "h" |] in
-  let solver = Solver.mk_solver_t ctx (Tactic.mk_tactic ctx "smt") in
+  and bv4type = BitVector.mk_sort ctx 4
+  and bv8type = BitVector.mk_sort ctx 8 in
+  let pal = Z3Array.mk_const_s ctx "pal" bv4type bv4type
+  and pixels = Z3Array.mk_const_s ctx "pixels" itype bv8type
+  and solver = Solver.mk_solver_t ctx (Tactic.mk_tactic ctx "smt") in
   ignore (List.fold_right
     (fun altlist num ->
       let num_exp = mkint num in
-      let p0_idx = pal_bit ctx pbits itype 0 num_exp in
-      let p1_idx = pal_bit ctx pbits itype 1 num_exp in
-      let p2_idx = pal_bit ctx pbits itype 2 num_exp in
-      let p3_idx = pal_bit ctx pbits itype 3 num_exp in
+      let p0_idx = pal_bit ctx pixels itype bv4type 0 num_exp in
+      let p1_idx = pal_bit ctx pixels itype bv4type 1 num_exp in
+      let p2_idx = pal_bit ctx pixels itype bv4type 2 num_exp in
+      let p3_idx = pal_bit ctx pixels itype bv4type 3 num_exp in
       let p0_a = Z3Array.mk_select ctx pal p0_idx in
       let p1_a = Z3Array.mk_select ctx pal p1_idx in
       let p2_a = Z3Array.mk_select ctx pal p2_idx in
       let p3_a = Z3Array.mk_select ctx pal p3_idx in
       let num_exp = mkint (num + 1) in
-      let p0_idx = pal_bit ctx pbits itype 0 num_exp in
-      let p1_idx = pal_bit ctx pbits itype 1 num_exp in
-      let p2_idx = pal_bit ctx pbits itype 2 num_exp in
-      let p3_idx = pal_bit ctx pbits itype 3 num_exp in
+      let p0_idx = pal_bit ctx pixels itype bv4type 0 num_exp in
+      let p1_idx = pal_bit ctx pixels itype bv4type 1 num_exp in
+      let p2_idx = pal_bit ctx pixels itype bv4type 2 num_exp in
+      let p3_idx = pal_bit ctx pixels itype bv4type 3 num_exp in
       let p0_b = Z3Array.mk_select ctx pal p0_idx in
       let p1_b = Z3Array.mk_select ctx pal p1_idx in
       let p2_b = Z3Array.mk_select ctx pal p2_idx in
@@ -240,14 +218,14 @@ let find_palette2 pixel_byte_alts =
       let rows_eq = List.map
         (fun (d0, d1, d2, d3, c0, c1, c2, c3) ->
 	  Boolean.mk_and ctx
-	    [Boolean.mk_eq ctx p0_a (mkint c0);
-	     Boolean.mk_eq ctx p1_a (mkint c1);
-	     Boolean.mk_eq ctx p2_a (mkint c2);
-	     Boolean.mk_eq ctx p3_a (mkint c3);
-	     Boolean.mk_eq ctx p0_b (mkint d0);
-	     Boolean.mk_eq ctx p1_b (mkint d1);
-	     Boolean.mk_eq ctx p2_b (mkint d2);
-	     Boolean.mk_eq ctx p3_b (mkint d3)])
+	    [Boolean.mk_eq ctx p0_a (mkbvint c0);
+	     Boolean.mk_eq ctx p1_a (mkbvint c1);
+	     Boolean.mk_eq ctx p2_a (mkbvint c2);
+	     Boolean.mk_eq ctx p3_a (mkbvint c3);
+	     Boolean.mk_eq ctx p0_b (mkbvint d0);
+	     Boolean.mk_eq ctx p1_b (mkbvint d1);
+	     Boolean.mk_eq ctx p2_b (mkbvint d2);
+	     Boolean.mk_eq ctx p3_b (mkbvint d3)])
 	  altlist in
       Solver.add solver [Boolean.mk_or ctx rows_eq];
       num + 2)
@@ -261,20 +239,20 @@ let find_palette2 pixel_byte_alts =
         Some model ->
 	  let palette = Array.make 16 0 in
 	  for i = 0 to 15 do
-	    let pal_exp = Z3Array.mk_select ctx pal (mkint i) in
+	    let pal_exp = Z3Array.mk_select ctx pal (mkbvint i) in
 	    match Model.eval model pal_exp true with
 	      Some num ->
-		let ival = Arithmetic.Integer.get_int num in
+		let ival = BitVector.get_int num in
 		Printf.printf "  palette entry %d: %x\n" i ival;
 		palette.(i) <- ival
 	    | None -> failwith "Palette eval failed"
 	  done;
 	  let colbytes = ref [] in
 	  for i = 0 to List.length pixel_byte_alts * 2 - 1 do
-	    let byte_exp = byte_expr ctx pbits itype (mkint i) in
+	    let byte_exp = Z3Array.mk_select ctx pixels (mkint i) in
 	    match Model.eval model byte_exp true with
 	      Some num ->
-		let ival = Arithmetic.Integer.get_int num in
+		let ival = BitVector.get_int num in
 		Printf.printf "  byte val %d: %.2x\n" i ival;
 		colbytes := ival :: !colbytes
 	    | None -> failwith "Byte eval failed"
@@ -423,25 +401,27 @@ let render_attempt palette ht_matched ?ht_besteffort orig_byte_vals section =
    BYTES_ARR that succeeds.  *)
 
 let find_splitpoint bytes_arr hist_arr badness_arr lo_point hi_point best_in
-                    bytevals section =
+                    bytevals section previous_palette =
   let rec scan lo hi best =
     let midpt = (lo + hi) / 2 in
     if lo = hi - 1 || midpt = lo then
       lo, best
     else begin
       let byte_list = Array.to_list (Array.sub bytes_arr 0 (midpt + 1)) in
-      match find_palette byte_list bytes_arr hist_arr badness_arr with
-	Some (p, ht_m, ht_be) ->
+      match find_palette byte_list bytes_arr hist_arr badness_arr
+			 (if section > 0 then Some previous_palette
+			  else None) with
+	Some (p, ht_m, ht_be) as new_result ->
 	  render_attempt p ht_m bytevals section;
-	  scan midpt hi (Some (p, ht_m, ht_be))
+	  scan midpt hi new_result
       | None ->
           scan lo midpt best
     end in
   scan lo_point hi_point best_in
 
-let attempt img mixes section xmask randomness mixno fast_mode these_errors_r
-	    these_errors_g these_errors_b next_errors_r next_errors_g
-	    next_errors_b ~random_dither ~plain_fs =
+let attempt img mixes section previous_palette xmask randomness mixno fast_mode
+	    these_errors_r these_errors_g these_errors_b next_errors_r 
+	    next_errors_g next_errors_b ~random_dither ~plain_fs =
   let r_randomness = (randomness * 54) / 256
   and g_randomness = (randomness * 183) / 256
   and b_randomness = (randomness * 18) / 256 in
@@ -550,7 +530,7 @@ let attempt img mixes section xmask randomness mixno fast_mode these_errors_r
     flush stdout;
     let splitpt, res
       = find_splitpoint cols_arr hist_arr badness_arr lwm hwm best !bytevals
-			section in
+			section previous_palette in
     let len = num_cols - splitpt - 2 in
     if len > 0 then begin
       let deleted = cols_arr.(splitpt + 1)
@@ -584,7 +564,9 @@ let attempt img mixes section xmask randomness mixno fast_mode these_errors_r
       render_attempt p ht_m ~ht_besteffort:ht_be !bytevals section;
       p, ht_m, ht_be, !bytevals
   | None ->
-      begin match find_palette orig_cols cols_arr hist_arr badness_arr with
+      begin match find_palette orig_cols cols_arr hist_arr badness_arr
+			       (if section > 0 then Some previous_palette
+				else None) with
         Some (p, ht_m, ht_be) ->
 	  render_attempt p ht_m ~ht_besteffort:ht_be !bytevals section;
 	  p, ht_m, ht_be, !bytevals
@@ -715,6 +697,7 @@ let multimix img mixes section randomness =
 let _ =
   let xmask_ref = ref 0
   and fastmode_ref = ref false
+  and wait_at_end = ref true
   and dither_ref = ref "ordered"
   and mixno_ref = ref 0
   and randomness_ref = ref 64
@@ -726,6 +709,7 @@ let _ =
      "-dither", Arg.Set_string dither_ref, "Dither type (fs, ordered, ord+fs)";
      "-mixno", Arg.Set_int mixno_ref, "Use next-higher contrast mixes";
      "-random", Arg.Set_int randomness_ref, "Amount of randomness (def. 64)";
+     "-nowait", Arg.Clear wait_at_end, "Wait at end before closing window";
      "-o", Arg.Set_string outfile, "Set output file name"] in
   Arg.parse argspec (fun inp -> inputfile := inp) "Usage: palsearch [opts]";
   let img = Images.load !inputfile [] in
@@ -765,13 +749,14 @@ let _ =
 	Printf.fprintf stderr "Bad dither type '%s'\n" x;
 	exit 1 in
   let screen_bytes = Bytes.create 20480
-  and output_palettes = Bytes.create 2048 in
+  and output_palettes = Bytes.create (16 + change_per_row*128) in
   let these_errors_r = Array.create 320 0.0
   and these_errors_g = Array.create 320 0.0
   and these_errors_b = Array.create 320 0.0
   and next_errors_r = Array.create 320 0.0
   and next_errors_g = Array.create 320 0.0
   and next_errors_b = Array.create 320 0.0 in
+  let previous_palette = Array.create 16 (-1) in
   for section = 0 to (256 / chunksize) - 1 do
     Printf.printf "Section %d:\n" section;
     flush stdout;
@@ -779,10 +764,10 @@ let _ =
       multimix img mixes section !randomness_ref
     else begin
       let palette, ht_matched, ht_besteffort, bytevals
-	= attempt img mixes section !xmask_ref !randomness_ref !mixno_ref
-		  !fastmode_ref these_errors_r these_errors_g these_errors_b
-		  next_errors_r next_errors_g next_errors_b ~random_dither
-		  ~plain_fs in
+	= attempt img mixes section previous_palette !xmask_ref !randomness_ref
+		  !mixno_ref !fastmode_ref these_errors_r these_errors_g
+		  these_errors_b next_errors_r next_errors_g next_errors_b
+		  ~random_dither ~plain_fs in
       let row_start = (section / 4) * 640 + (section mod 4) * 2 in
       List.iteri
 	(fun idx colours_quad ->
@@ -794,15 +779,36 @@ let _ =
 	      Hashtbl.find ht_besteffort colours_quad in
 	  screen_bytes.[offset] <- Char.chr byte)
 	(List.rev bytevals);
-      for i = 0 to 15 do
-	output_palettes.[section * 16 + i] <- Char.chr palette.(i)
-      done
+      begin if section = 0 then
+	for i = 0 to 15 do
+	  output_palettes.[i] <- Char.chr ((i lsl 4) + (palette.(i) lxor 7))
+	done
+      else
+	let same_no = ref 0 and change_no = ref 0 in
+	for i = 0 to 15 do
+	  if !same_no >= (16 - change_per_row)
+	     || palette.(i) <> previous_palette.(i) then begin
+	    Printf.printf "Entry %d: %d -> %d\n" i
+			  previous_palette.(i) palette.(i);
+	    assert (!change_no < change_per_row);
+	    output_palettes.[16 + !change_no * 128 + (section - 1)]
+	      <- Char.chr ((i lsl 4) + (palette.(i) lxor 7));
+	    incr change_no
+	  end else begin
+	    Printf.printf "Entry %d: %d == %d\n" i previous_palette.(i)
+			  palette.(i);
+	    incr same_no
+	  end
+	done
+      end;
+      Array.blit palette 0 previous_palette 0 16
     end
   done;
   (*let arr = Array.init 128 (fun n -> n) in
   let out = ForkWork.map_array (fun z -> multimix img mixes z
 			       !randomness_ref; ()) arr in*)
-  ignore (Graphics.wait_next_event [Graphics.Button_down]);
+  if !wait_at_end then
+    ignore (Graphics.wait_next_event [Graphics.Button_down]);
   if !outfile <> "" then begin
     let f = open_out !outfile in
     output_string f (Bytes.to_string output_palettes);

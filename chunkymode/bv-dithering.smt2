@@ -122,6 +122,12 @@
 (assert (= (pal_lookup (p2 15)) (_ bv0 4)))
 (assert (= (pal_lookup (p3 15)) (_ bv0 4)))
 
+(assert (> (+ (if (= (pal_lookup #x0) (_ bv0 4)) 1 0)
+	      (if (= (pal_lookup #x1) (_ bv1 4)) 1 0)
+	      (if (= (pal_lookup #x2) (_ bv2 4)) 1 0)
+	      (if (= (pal_lookup #x3) (_ bv3 4)) 1 0)
+	      (if (= (pal_lookup #x4) (_ bv4 4)) 1 0)) 2))
+
 (check-sat)
 (get-model)
 
