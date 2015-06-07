@@ -1,10 +1,14 @@
 #!/usr/bin/env expect
+set timeout -1
+cd [file dirname [lindex $argv 0]]
 spawn ~/stuff/xfer/xferc/xfer
-expect "Enter command:"
-send "s"
-exec sleep 1
-expect "File spec (* and ? allowed):"
-send "demo\r"
+foreach f $::argv {
+  expect "Enter command:"
+  send "s"
+  exec sleep 1
+  expect "File spec (* and ? allowed):"
+  send "[file tail $f]\r"
+}
 expect "Enter command:"
 send "q"
 expect eof

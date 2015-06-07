@@ -16,6 +16,9 @@ entry_point:
 	jsr mos_setmode
 	jsr mos_cursoroff
 
+	@crtc_write 8, {#0b11000000}
+	@crtc_write 7, {#34}
+
 	@load_file_to nice_picture, $2b70
 
 	jsr initvsync
@@ -27,7 +30,7 @@ loop_forever
 	.)
 
 nice_picture
-	.asc "frgdmp2",13
+	.asc "beach",13
 
 curs1:
 	.word 0
@@ -242,7 +245,7 @@ not_last
 	rti
 
 fliptime
-	.word 64 * 26 + 30
+	.word 64 * 34 + 29
 
 vsync
 	phx
