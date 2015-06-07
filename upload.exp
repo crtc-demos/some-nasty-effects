@@ -1,0 +1,10 @@
+#!/usr/bin/env expect
+spawn ~/stuff/xfer/xferc/xfer
+expect "Enter command:"
+send "s"
+exec sleep 1
+expect "File spec (* and ? allowed):"
+send "demo\r"
+expect "Enter command:"
+send "q"
+expect eof
