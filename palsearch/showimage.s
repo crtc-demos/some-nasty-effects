@@ -30,7 +30,7 @@ loop_forever
 	.)
 
 nice_picture
-	.asc "beach",13
+	.asc "beach2",13
 
 curs1:
 	.word 0

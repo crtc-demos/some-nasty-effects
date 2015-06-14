@@ -76,6 +76,24 @@ let calc_distance col1 col2 =
   +. rgb_dist (col_to_rgb p3) (col_to_rgb q3)
   +. rgb_dist (col_to_rgb p4) (col_to_rgb q4)
 
+let constrain_previous_palette ctx solver pal prev_pal =
+  let mkint n = Arithmetic.Integer.mk_numeral_i ctx n
+  and mkbvint n = BitVector.mk_numeral ctx (string_of_int n) 4 in
+  let i0 = mkint 0 and i1 = mkint 1 in
+  let _, oplist = Array.fold_left
+    (fun (idx, oplist) ent ->
+      let op =
+	Boolean.mk_ite ctx
+	  (Boolean.mk_eq ctx
+	    (Z3Array.mk_select ctx pal (mkbvint idx))
+	    (mkbvint ent))
+	  i1 i0 in
+      (succ idx, op::oplist))
+    (0, [])
+    prev_pal in
+  let sum = Arithmetic.mk_add ctx oplist in
+  Solver.add solver [Arithmetic.mk_ge ctx sum (mkint (16 - change_per_row))]
+
 let find_palette pixel_bytes all_colours cols_histo badness_out
 		 previous_palette =
   let ctx = mk_context ["model", "true"; "proof", "false"] in
@@ -107,21 +125,7 @@ let find_palette pixel_bytes all_colours cols_histo badness_out
     0);
   begin match previous_palette with
     None -> ()
-  | Some prev_pal ->
-      let i0 = mkint 0 and i1 = mkint 1 in
-      let _, oplist = Array.fold_left
-        (fun (idx, oplist) ent ->
-	  let op =
-	    Boolean.mk_ite ctx
-	      (Boolean.mk_eq ctx
-		(Z3Array.mk_select ctx pal (mkbvint idx))
-		(mkbvint ent))
-	      i1 i0 in
-	  (succ idx, op::oplist))
-	(0, [])
-	prev_pal in
-      let sum = Arithmetic.mk_add ctx oplist in
-      Solver.add solver [Arithmetic.mk_ge ctx sum (mkint (16 - change_per_row))]
+  | Some prev_pal -> constrain_previous_palette ctx solver pal prev_pal
   end;
   let status = Solver.check solver [] in
   match status with
@@ -185,7 +189,7 @@ let find_palette pixel_bytes all_colours cols_histo badness_out
   | Solver.UNSATISFIABLE -> Printf.printf "unsat\n"; None
   | Solver.UNKNOWN -> Printf.printf "unknown\n"; None
 
-let find_palette2 pixel_byte_alts =
+let find_palette2 pixel_byte_alts previous_palette =
   let ctx = mk_context ["model", "true"; "proof", "false"] in
   let mkint n = Arithmetic.Integer.mk_numeral_i ctx n
   and mkbvint n = BitVector.mk_numeral ctx (string_of_int n) 4 in
@@ -231,6 +235,10 @@ let find_palette2 pixel_byte_alts =
       num + 2)
     pixel_byte_alts
     0);
+  begin match previous_palette with
+    None -> ()
+  | Some prev_pal -> constrain_previous_palette ctx solver pal prev_pal
+  end;
   let status = Solver.check solver [] in
   match status with
     Solver.SATISFIABLE ->
@@ -397,6 +405,32 @@ let render_attempt palette ht_matched ?ht_besteffort orig_byte_vals section =
     done
   done
 
+let rgb_diff (r1, g1, b1) (r2, g2, b2) =
+  (float_of_int (r1 - r2) *. 0.2126) ** 2.0
+  +. (float_of_int (g1 - g2) *. 0.7152) ** 2.0
+  +. (float_of_int (b1 - b2) *. 0.0722) ** 2.0
+
+let evaluate_error palette ht_matched ht_besteffort orig_byte_vals =
+  let bytes_ref = ref (List.rev orig_byte_vals)
+  and acc_error = ref 0.0 in
+  for row = 0 to 1 do
+    for bytepos = 0 to 79 do
+      let byte = List.hd !bytes_ref in
+      bytes_ref := List.tl !bytes_ref;
+      let c1, c2, c3, c4 = byte in
+      if not (Hashtbl.mem ht_matched (c1, c2, c3, c4)) then begin
+        let pixbyte = Hashtbl.find ht_besteffort (c1, c2, c3, c4) in
+	let n1, n2, n3, n4 = lookup_cols palette pixbyte in
+	let err = rgb_diff (rgb_of_col c1) (rgb_of_col n1)
+	          +. rgb_diff (rgb_of_col c2) (rgb_of_col n2)
+		  +. rgb_diff (rgb_of_col c3) (rgb_of_col n3)
+		  +. rgb_diff (rgb_of_col c4) (rgb_of_col n4) in
+	acc_error := !acc_error +. err
+      end
+    done
+  done;
+  !acc_error
+
 (* LO_POINT should succeed, HI_POINT should fail. Find the highest point in
    BYTES_ARR that succeeds.  *)
 
@@ -419,9 +453,146 @@ let find_splitpoint bytes_arr hist_arr badness_arr lo_point hi_point best_in
     end in
   scan lo_point hi_point best_in
 
+let indexify lst =
+  let ht = Hashtbl.create 5 in
+  let keys, _ = List.fold_left
+    (fun (keys, idx) item ->
+      if Hashtbl.mem ht item then
+        (keys, idx)
+      else begin
+        Hashtbl.add ht item idx;
+	(item::keys, succ idx)
+      end)
+    ([], 0)
+    lst in
+  let idx_out = List.map (fun x -> Hashtbl.find ht x) lst in
+  List.rev keys, idx_out
+
+let add_to_front frmlist tolist outlist =
+  List.fold_right (fun elem outlist' -> (elem::tolist)::outlist')
+		  frmlist outlist
+
+let iterate_product inlist =
+  let rec iterate inlist out =
+    match inlist with
+      [] -> out
+    | [e] -> add_to_front e [] out
+    | e::es ->
+	let rem = iterate es out in
+	List.fold_right (fun elem acc -> add_to_front e elem acc) rem [] in
+  iterate inlist []
+
+let take lst n =
+  let rec scan out n inp =
+    if n = 0 then List.rev out
+    else match inp with
+      [] -> List.rev out
+    | q::qs -> scan (q::out) (n - 1) qs in
+  scan [] n lst
+
+let multimix img mixes section randomness previous_palette cutoff =
+  let r_randomness = (randomness * 54) / 256
+  and g_randomness = (randomness * 183) / 256
+  and b_randomness = (randomness * 18) / 256 in
+  let things = ref [] in
+  for byte = 0 to 79 do
+    let idxlist = ref [] in
+    for row = 0 to 1 do
+      let y = section * chunksize + row in
+      for pix = 0 to 3 do
+	let x = byte * 4 + pix in
+	let col = get_rgb img x y in
+	let cr, cg, cb =
+	  let bias_r =
+	    if r_randomness > 0 then
+	      (Random.int r_randomness) - r_randomness / 2
+	    else 0
+	  and bias_g =
+	    if g_randomness > 0 then
+	      (Random.int g_randomness) - g_randomness / 2
+	    else 0
+	  and bias_b =
+	    if b_randomness > 0 then
+	      (Random.int b_randomness) - b_randomness / 2 
+	    else 0 in
+	clamp (col.Color.Rgb.r + bias_r),
+	clamp (col.Color.Rgb.g + bias_g),
+	clamp (col.Color.Rgb.b + bias_b) in
+	let r' = cr / 52 and g' = cg / 52 and b' = cb / 52 in
+	let idx = b' * 25 + g' * 5 + r' in
+	idxlist := !idxlist @ [idx]
+      done
+    done;
+    let uniq, indices = indexify !idxlist in
+    let uniqlst = List.map (fun idx -> take mixes.(idx) cutoff) uniq in
+    let iterated = iterate_product uniqlst in
+    (*Printf.printf "Byte %d: iterated length: %d " byte (List.length iterated);*)
+    let pset = ref PixelPairSet.empty in
+    List.iteri
+      (fun i altlist ->
+        let _, pix_out = List.fold_right
+	  (fun pix_alt (pixno, pixout) ->
+	    let _, dithercols = List.nth altlist pix_alt in
+	    let dx = pixno land 1 and dy = (pixno land 4) lsr 2 in
+	    let offset = [| 1; 2; 3; 0 |].(dy * 2 + dx) in
+	    succ pixno, List.nth dithercols offset :: pixout)
+	  indices
+	  (0, []) in
+	match pix_out with
+	  [p1; p2; p3; p4;
+	   q1; q2; q3; q4] ->
+	    pset := PixelPairSet.add (p1, p2, p3, p4, q1, q2, q3, q4) !pset;
+	| _ -> failwith "No pixels?")
+      iterated;
+    Printf.printf "%d " (PixelPairSet.cardinal !pset);
+    things := (PixelPairSet.elements !pset) :: !things
+    (*PixelPairSet.iter
+      (fun (p1, p2, p3, p4, q1, q2, q3, q4) ->
+        Printf.printf "pixel: [%d %d %d %d] [%d %d %d %d]\n" p1 p2 p3 p4
+		      q1 q2 q3 q4)
+      !pset;
+    Printf.printf "\n"*)
+  done;
+  Printf.printf "\nSolving...\n";
+  flush stdout;
+  let uniq, index = indexify !things in
+  let res = begin match find_palette2 uniq
+			    (if section = 0 then None
+			     else Some previous_palette) with
+    Some (pal, colbytes) ->
+      let index_ref = ref (List.rev index)
+      and ht_m = Hashtbl.create 10
+      and bytelist_compat = Array.make 160 (0, 0, 0, 0) in
+      for byte = 0 to 79 do
+	let col_idx = List.hd !index_ref in
+	index_ref := List.tl !index_ref;
+	for row = 0 to 1 do
+	  let y = section * 2 + row in
+	  let col = List.nth colbytes (2 * col_idx + row) in
+	  let n1, n2, n3, n4 = lookup_cols pal col in
+	  Hashtbl.add ht_m (n1, n2, n3, n4) col;
+	  bytelist_compat.(row * 80 + byte) <- (n1, n2, n3, n4);
+	  let clist = ref [n1; n2; n3; n4] in
+	  for pix = 0 to 3 do
+	    let x = byte * 4 + pix in
+	    let col = List.hd !clist in
+	    clist := List.tl !clist;
+	    let cr, cg, cb = col_to_rgb col in
+	    Graphics.set_color (Graphics.rgb cr cg cb);
+	    Graphics.fill_rect (x * 2) ((255 - y) * 2 - 1) 2 2
+	  done
+	done
+      done;
+      Some (pal, ht_m, List.rev (Array.to_list bytelist_compat))
+  | None -> None
+  end in
+  flush stdout;
+  res
+
 let attempt img mixes section previous_palette xmask randomness mixno fast_mode
 	    these_errors_r these_errors_g these_errors_b next_errors_r 
-	    next_errors_g next_errors_b ~random_dither ~plain_fs =
+	    next_errors_g next_errors_b ~random_dither ~plain_fs
+	    ~mmix_err_threshold =
   let r_randomness = (randomness * 54) / 256
   and g_randomness = (randomness * 183) / 256
   and b_randomness = (randomness * 18) / 256 in
@@ -562,7 +733,24 @@ let attempt img mixes section previous_palette xmask randomness mixno fast_mode
   match res with
     Some (p, ht_m, ht_be) ->
       render_attempt p ht_m ~ht_besteffort:ht_be !bytevals section;
-      p, ht_m, ht_be, !bytevals
+      let section_error = evaluate_error p ht_m ht_be !bytevals in
+      Printf.printf "Error for section %d: %f\n" section section_error;
+      if section_error > mmix_err_threshold then begin
+	let rec retry cutoff =
+	  if cutoff > 20 then
+	    p, ht_m, ht_be, !bytevals
+	  else begin
+            Printf.printf "Trying multimix instead... (cutoff=%d)\n" cutoff;
+            match multimix img mixes section randomness previous_palette
+			   cutoff with
+	      Some (p, ht_m, bytevals) ->
+	        p, ht_m, (Hashtbl.create 1), bytevals
+	    | None ->
+		retry (if cutoff < 5 then cutoff + 1 else cutoff * 4)
+	  end in
+	retry 1
+      end else
+	p, ht_m, ht_be, !bytevals
   | None ->
       begin match find_palette orig_cols cols_arr hist_arr badness_arr
 			       (if section > 0 then Some previous_palette
@@ -573,127 +761,6 @@ let attempt img mixes section previous_palette xmask randomness mixno fast_mode
       | None -> failwith "1-colour fallback failed"
       end
 
-let indexify lst =
-  let ht = Hashtbl.create 5 in
-  let keys, _ = List.fold_left
-    (fun (keys, idx) item ->
-      if Hashtbl.mem ht item then
-        (keys, idx)
-      else begin
-        Hashtbl.add ht item idx;
-	(item::keys, succ idx)
-      end)
-    ([], 0)
-    lst in
-  let idx_out = List.map (fun x -> Hashtbl.find ht x) lst in
-  List.rev keys, idx_out
-
-let add_to_front frmlist tolist outlist =
-  List.fold_right (fun elem outlist' -> (elem::tolist)::outlist')
-		  frmlist outlist
-
-let iterate_product inlist =
-  let rec iterate inlist out =
-    match inlist with
-      [] -> out
-    | [e] -> add_to_front e [] out
-    | e::es ->
-	let rem = iterate es out in
-	List.fold_right (fun elem acc -> add_to_front e elem acc) rem [] in
-  iterate inlist []
-
-let multimix img mixes section randomness =
-  let r_randomness = (randomness * 54) / 256
-  and g_randomness = (randomness * 183) / 256
-  and b_randomness = (randomness * 18) / 256 in
-  let things = ref [] in
-  for byte = 0 to 79 do
-    let idxlist = ref [] in
-    for row = 0 to 1 do
-      let y = section * chunksize + row in
-      for pix = 0 to 3 do
-	let x = byte * 4 + pix in
-	let col = get_rgb img x y in
-	let cr, cg, cb =
-	  let bias_r =
-	    if r_randomness > 0 then
-	      (Random.int r_randomness) - r_randomness / 2
-	    else 0
-	  and bias_g =
-	    if g_randomness > 0 then
-	      (Random.int g_randomness) - g_randomness / 2
-	    else 0
-	  and bias_b =
-	    if b_randomness > 0 then
-	      (Random.int b_randomness) - b_randomness / 2 
-	    else 0 in
-	clamp (col.Color.Rgb.r + bias_r),
-	clamp (col.Color.Rgb.g + bias_g),
-	clamp (col.Color.Rgb.b + bias_b) in
-	let r' = cr / 52 and g' = cg / 52 and b' = cb / 52 in
-	let idx = b' * 25 + g' * 5 + r' in
-	idxlist := !idxlist @ [idx]
-      done
-    done;
-    let uniq, indices = indexify !idxlist in
-    let uniqlst = List.map (fun idx -> mixes.(idx)) uniq in
-    let iterated = iterate_product uniqlst in
-    (*Printf.printf "Byte %d: iterated length: %d " byte (List.length iterated);*)
-    let pset = ref PixelPairSet.empty in
-    List.iteri
-      (fun i altlist ->
-        let _, pix_out = List.fold_right
-	  (fun pix_alt (pixno, pixout) ->
-	    let _, dithercols = List.nth altlist pix_alt in
-	    let dx = pixno land 1 and dy = (pixno land 4) lsr 2 in
-	    let offset = [| 0; 3; 2; 1 |].(dy * 2 + dx) in
-	    succ pixno, List.nth dithercols offset :: pixout)
-	  indices
-	  (0, []) in
-	match pix_out with
-	  [p1; p2; p3; p4;
-	   q1; q2; q3; q4] ->
-	    pset := PixelPairSet.add (p1, p2, p3, p4, q1, q2, q3, q4) !pset;
-	| _ -> failwith "No pixels?")
-      iterated;
-    Printf.printf "%d " (PixelPairSet.cardinal !pset);
-    things := (PixelPairSet.elements !pset) :: !things
-    (*PixelPairSet.iter
-      (fun (p1, p2, p3, p4, q1, q2, q3, q4) ->
-        Printf.printf "pixel: [%d %d %d %d] [%d %d %d %d]\n" p1 p2 p3 p4
-		      q1 q2 q3 q4)
-      !pset;
-    Printf.printf "\n"*)
-  done;
-  Printf.printf "\nSolving...\n";
-  flush stdout;
-  let uniq, index = indexify !things in
-  Printf.printf "index length: %d\n" (List.length index);
-  begin match find_palette2 uniq with
-    Some (pal, colbytes) ->
-      let index_ref = ref (List.rev index) in
-      for byte = 0 to 79 do
-	let col_idx = List.hd !index_ref in
-	index_ref := List.tl !index_ref;
-	for row = 0 to 1 do
-	  let y = section * 2 + row in
-	  let col = List.nth colbytes (2 * col_idx + row) in
-	  let n1, n2, n3, n4 = lookup_cols pal col in
-	  let clist = ref [n1; n2; n3; n4] in
-	  for pix = 0 to 3 do
-	    let x = byte * 4 + pix in
-	    let col = List.hd !clist in
-	    clist := List.tl !clist;
-	    let cr, cg, cb = col_to_rgb col in
-	    Graphics.set_color (Graphics.rgb cr cg cb);
-	    Graphics.fill_rect (x * 2) ((255 - y) * 2 - 1) 2 2
-	  done
-	done
-      done
-  | None -> ()
-  end;
-  flush stdout
-
 let _ =
   let xmask_ref = ref 0
   and fastmode_ref = ref false
@@ -701,6 +768,7 @@ let _ =
   and dither_ref = ref "ordered"
   and mixno_ref = ref 0
   and randomness_ref = ref 64
+  and mmix_err_threshold = ref 2.0
   and inputfile = ref ""
   and outfile = ref "" in
   let argspec =
@@ -709,6 +777,8 @@ let _ =
      "-dither", Arg.Set_string dither_ref, "Dither type (fs, ordered, ord+fs)";
      "-mixno", Arg.Set_int mixno_ref, "Use next-higher contrast mixes";
      "-random", Arg.Set_int randomness_ref, "Amount of randomness (def. 64)";
+     "-errmax", Arg.Set_float mmix_err_threshold,
+		"Error threshold for attempting multimix";
      "-nowait", Arg.Clear wait_at_end, "Wait at end before closing window";
      "-o", Arg.Set_string outfile, "Set output file name"] in
   Arg.parse argspec (fun inp -> inputfile := inp) "Usage: palsearch [opts]";
@@ -761,13 +831,15 @@ let _ =
     Printf.printf "Section %d:\n" section;
     flush stdout;
     if do_multimix then
-      multimix img mixes section !randomness_ref
+      ignore (multimix img mixes section !randomness_ref previous_palette
+		       max_int)
     else begin
       let palette, ht_matched, ht_besteffort, bytevals
 	= attempt img mixes section previous_palette !xmask_ref !randomness_ref
 		  !mixno_ref !fastmode_ref these_errors_r these_errors_g
 		  these_errors_b next_errors_r next_errors_g next_errors_b
-		  ~random_dither ~plain_fs in
+		  ~random_dither ~plain_fs
+		  ~mmix_err_threshold:!mmix_err_threshold in
       let row_start = (section / 4) * 640 + (section mod 4) * 2 in
       List.iteri
 	(fun idx colours_quad ->

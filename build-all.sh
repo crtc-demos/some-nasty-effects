@@ -50,6 +50,14 @@ pushd palsearch
 ./dcompile.sh
 popd
 
+pushd disco
+./compile.sh
+popd
+
+pushd phasetest
+./compile.sh
+popd
+
 cp -f '!boot' '!boot.inf' "$OUTPUTDISK"
 
 find . -name "*.inf" -exec ./update-inf.sh {} \;

@@ -12,6 +12,16 @@ start:
 
 	@load_file_to rings, 0x3000
 
+	; This appears to realign the ULA's 1MHz output. Who knows how!
+	lda #19
+	jsr osbyte
+	sei
+	lda #$08
+	sta ULACONTROL
+	lda #$18
+	sta ULACONTROL
+	cli
+
 	lda #BANK0
 	jsr select_sram
 	
@@ -573,13 +583,17 @@ yloop
 	adc x_offset
 	sec
 	sbc %yidx
-	sta xloop+1
+	sta mod_sintab+1
 	lda #>sintab
 	adc #0
-	sta xloop+2
+	sta mod_sintab+2
 	
 	ldy #63
 xloop
+	lda %rowptr
+	eor #64
+	sta %rowptr
+mod_sintab
 	lda sintab,y
 	sbc sintab,y
 mod_rings
