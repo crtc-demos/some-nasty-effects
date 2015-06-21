@@ -23,7 +23,7 @@ if ! [ "$attr" ]; then
 fi
 
 if ! [ "$type" ]; then
-  type="TYPE=0"
+  type="TYPE=1"
 fi
 
 orig_filename=${filename#$.}

@@ -54,7 +54,11 @@ pushd disco
 ./compile.sh
 popd
 
-pushd phasetest
+#pushd phasetest
+#./compile.sh
+#popd
+
+pushd scroll
 ./compile.sh
 popd
 

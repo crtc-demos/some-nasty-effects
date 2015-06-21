@@ -118,6 +118,10 @@ setup
 	ldx #0b00000000
 	jsr crtc_write_ax
 	
+	lda #2
+	ldx #90
+	jsr crtc_write_ax
+	
 	;lda #154
 	;ldx #0b11011100
 	;jsr osbyte
@@ -559,9 +563,11 @@ plasma:
 	sta %rowptr+1
 	
 	lda ring_topleft
-	sta mod_rings+1
+	sta mod_rings_0 + 1
+	sta mod_rings_1 + 1
 	lda ring_topleft+1
-	sta mod_rings+2
+	sta mod_rings_0 + 2
+	sta mod_rings_1 + 2
 	
 	; Non-shadow screen
 	lda ACCCON
@@ -583,28 +589,56 @@ yloop
 	adc x_offset
 	sec
 	sbc %yidx
-	sta mod_sintab+1
+	sta mod_sintab_0 + 1
+	sta mod_sintab_1 + 1
 	lda #>sintab
 	adc #0
-	sta mod_sintab+2
+	sta mod_sintab_0 + 2
+	sta mod_sintab_1 + 2
 	
-	ldy #63
-xloop
-	lda %rowptr
-	eor #64
-	sta %rowptr
-mod_sintab
+	; Render the even bytes
+	
+	ldy #62
+xloop_0:
+mod_sintab_0:
 	lda sintab,y
 	sbc sintab,y
-mod_rings
+mod_rings_0:
 	adc rings,y
 	adc sintab,x
-	sta mod_store+1
-mod_store:
+	sta mod_store_0 + 1
+mod_store_0:
 	lda exp_colour_bytes
 	sta (%rowptr),y
 	dey
-	bpl xloop
+	dey
+	bpl xloop_0
+
+	; And the odd bytes
+
+	lda %rowptr
+	eor #64
+	sta %rowptr
+
+	ldy #63
+xloop_1:
+mod_sintab_1:
+	lda sintab,y
+	sbc sintab,y
+mod_rings_1:
+	adc rings,y
+	adc sintab,x
+	sta mod_store_1 + 1
+mod_store_1:
+	lda exp_colour_bytes
+	sta (%rowptr),y
+	dey
+	dey
+	bpl xloop_1
+
+	lda %rowptr
+	eor #64
+	sta %rowptr
 
 	inc %yidx
 	lda %yidx
@@ -629,7 +663,8 @@ noswitch
 	inc %rowptr+1
 done:	.)
 
-	inc mod_rings+2
+	inc mod_rings_0 + 2
+	inc mod_rings_1 + 2
 
 	lda %yidx
 	cmp #32
