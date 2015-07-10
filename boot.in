@@ -1,0 +1,5 @@
+*|disco
+*|load sinlogs 2B00
+*|load l.logs 2C00
+*|scroll
+*showimg
