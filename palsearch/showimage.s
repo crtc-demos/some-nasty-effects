@@ -30,7 +30,7 @@ loop_forever
 	.)
 
 nice_picture
-	.asc "beach2",13
+	.asc "prrtdmp",13
 
 curs1:
 	.word 0
@@ -213,6 +213,20 @@ palette_write:
 	; Queue up the next colour: it doesn't matter if this takes a little
 	; longer.
 	ldx index
+
+	cpx #127
+	.(
+	bne not_last
+	; Disable usr timer1 interrupt
+	lda #0b01000000
+	sta USR_IER
+	lda #255
+	sta USR_T1L_L
+	sta USR_T1L_H
+	bra exit_irq
+not_last
+	.)
+
 	lda $2f00,x : sta palette_write+1
 	lda $2f80,x : sta palette_write+3
 	lda $2b80,x : sta palette_write+5
@@ -226,18 +240,7 @@ palette_write:
 	inx
 	stx index
 
-	cpx #127
-	.(
-	bne not_last
-	; Disable usr timer1 interrupt
-	lda #0b01000000
-	sta USR_IER
-	lda #255
-	sta USR_T1L_L
-	sta USR_T1L_H
-not_last
-	.)
-
+exit_irq:
 	ply
 	plx
 	pla
@@ -245,7 +248,8 @@ not_last
 	rti
 
 fliptime
-	.word 64 * 34 + 29
+	;.word 64 * 34 + 29
+	.word 64 * 34 + 57
 
 vsync
 	phx

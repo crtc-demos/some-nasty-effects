@@ -1,3 +1,5 @@
+#include <stdbool.h>
+
 static void
 oswrch (char x)
 {
@@ -5,10 +7,89 @@ oswrch (char x)
 }
 
 static void
+osbyte (char x)
+{
+  unsigned char dma, dmx, dmy;
+  __asm__ __volatile__ ("jsr $fff4" : "=Aq" (dma), "=xq" (dmx), "=yq" (dmy)
+				    : "Aq" (x));
+}
+
+static void
+osword (unsigned char code, unsigned char *parameters)
+{
+  unsigned char addr_lo = ((unsigned short) parameters) & 0xff;
+  unsigned char addr_hi = (((unsigned short) parameters) >> 8) & 0xff;
+  unsigned char dma, dmx, dmy;
+  __asm__ __volatile__ ("jsr $fff1"
+			: "=Aq" (dma), "=xq" (dmx), "=yq" (dmy)
+			: "Aq" (code), "xq" (addr_lo), "yq" (addr_hi)
+			: "memory");
+}
+
+static unsigned char osfile_params[18];
+
+static unsigned char
+osfile (unsigned char code)
+{
+  unsigned char addr_lo = ((unsigned short) osfile_params) & 0xff;
+  unsigned char addr_hi = (((unsigned short) osfile_params) >> 8) & 0xff;
+  unsigned char aout;
+  __asm__ __volatile__ ("jsr $ffdd"
+			: "=Aq" (aout)
+			: "Aq" (code), "xq" (addr_lo), "yq" (addr_hi)
+			: "memory");
+  return aout;
+}
+
+static void
+osfile_load (const char *filename, void *address)
+{
+  osfile_params[0] = ((unsigned short) filename) & 0xff;
+  osfile_params[1] = (((unsigned short) filename) >> 8) & 0xff;
+  osfile_params[2] = ((unsigned short) address) & 0xff;
+  osfile_params[3] = (((unsigned short) address) >> 8) & 0xff;
+  osfile_params[4] = osfile_params[5] = 0;
+  osfile_params[6] = osfile_params[7] = osfile_params[8] = osfile_params[9] = 0;
+  osfile (255);
+}
+
+static void
 setmode (char mode)
 {
   oswrch (22);
   oswrch (mode);
+}
+
+static void
+setpalette (unsigned char physical, unsigned char logical)
+{
+  static unsigned char params[5] = {0, 0, 0, 0, 0};
+  params[0] = physical;
+  params[1] = logical;
+  osword (0xc, &params[0]);
+}
+
+void **dispatch_table = (void **) 0x2000;
+
+static void
+start_effect (void)
+{
+  void (*fn) (void) = dispatch_table[0];
+  fn ();
+}
+
+static void
+finish_effect (void)
+{
+  void (*fn) (void) = dispatch_table[1];
+  fn ();
+}
+
+static void
+wait_for_vsync (void)
+{
+  void (*fn) (void) = dispatch_table[2];
+  fn ();
 }
 
 #define LHS(C) ((((C) & 0x8) << 4) | (((C) & 0x4) << 3) \
@@ -34,6 +115,7 @@ putpixel (unsigned int x, unsigned char y, unsigned char c)
   unsigned char *screen = (unsigned char *) 0x3000;
   unsigned char *rowptr = &screen[(y >> 3) * 640 + (y & 7)];
   unsigned int byte = (x >> 1) << 3;
+  /*rowptr[byte] &= ~cols[x & 1][15];*/
   rowptr[byte] |= cols[x & 1][c];
 }
 
@@ -43,14 +125,40 @@ box (unsigned int xlhs, unsigned char ytop, unsigned char col_base)
   unsigned char col_plus = 0;
   unsigned char x, y;
 
-  for (y = 0; y < 44; y++)
+  for (y = 0; y < 4; y++)
     {
       unsigned char yp = ytop + y;
       for (x = 0; x < 28; x++)
 	{
 	  unsigned int xp = xlhs + x;
-	  if (x + y > 3 && (27 - x) + y > 3
-	      && x + (43 - y) > 3 && (27 - x) + (43 - y) > 3)
+	  if (x + y > 3 && (27 - x) + y > 3)
+	    putpixel (xp, yp, col_base + col_plus);
+	  col_plus++;
+	  if (col_plus > 2)
+	    col_plus = 0;
+	}
+    }
+
+  for (y = 4; y < 40; y++)
+    {
+      unsigned char yp = ytop + y;
+      for (x = 0; x < 28; x++)
+	{
+	  unsigned int xp = xlhs + x;
+	  putpixel (xp, yp, col_base + col_plus);
+	  col_plus++;
+	  if (col_plus > 2)
+	    col_plus = 0;
+	}
+    }
+
+  for (y = 40; y < 44; y++)
+    {
+      unsigned char yp = ytop + y;
+      for (x = 0; x < 28; x++)
+	{
+	  unsigned int xp = xlhs + x;
+	  if (x + (43 - y) > 3 && (27 - x) + (43 - y) > 3)
 	    putpixel (xp, yp, col_base + col_plus);
 	  col_plus++;
 	  if (col_plus > 2)
@@ -59,33 +167,151 @@ box (unsigned int xlhs, unsigned char ytop, unsigned char col_base)
     }
 }
 
+static unsigned char *const palette = (unsigned char *) 0x1f00;
+
+static void
+init_palette (void)
+{
+  unsigned char i, j;
+
+  for (i = 0; i < 75; i++)
+    palette[i] = 0x10;
+}
+
+static char
+colour_array[] =
+{
+  0, 0, 0,
+  0, 0, 1,
+  0, 1, 1,
+  1, 1, 1,
+  1, 1, 3,
+  1, 3, 3,
+  3, 3, 3,
+  3, 3, 2,
+  3, 2, 2,
+  2, 2, 2,
+  2, 2, 6,
+  2, 6, 6,
+  6, 6, 6,
+  6, 6, 4,
+  6, 4, 4,
+  4, 4, 4,
+  4, 4, 5,
+  4, 5, 5,
+  5, 5, 5,
+  5, 5, 0,
+  5, 0, 0,
+  0
+};
+
+#define ROW(A,B,C,D,E)		\
+  (((E) ? (0x7 << 12) : 0)		\
+   | ((D) ? (0x7 << 9) : 0)	\
+   | ((C) ? (0x7 << 6) : 0)	\
+   | ((B) ? (0x7 << 3) : 0)	\
+   | ((A) ? 0x7 : 0))
+
+static unsigned short letters[][5] =
+{
+  {
+    ROW (0, 0, 0, 0, 0),
+    ROW (0, 0, 1, 1, 0),
+    ROW (0, 1, 0, 0, 0),
+    ROW (0, 1, 1, 1, 0),
+    ROW (0, 0, 0, 0, 0)
+  },
+  
+  {
+    ROW (0, 0, 0, 0, 0),
+    ROW (0, 0, 1, 1, 0),
+    ROW (0, 1, 0, 0, 0),
+    ROW (0, 1, 0, 0, 0),
+    ROW (0, 0, 0, 0, 0)
+  },
+  
+  {
+    ROW (0, 0, 0, 0, 0),
+    ROW (0, 1, 1, 1, 0),
+    ROW (0, 0, 1, 0, 0),
+    ROW (0, 0, 1, 0, 0),
+    ROW (0, 0, 0, 0, 0)
+  },
+};
+
+static void
+set_palette (int offset, int offset2, bool letter, char which_letter)
+{
+  unsigned char i, j;
+
+  for (i = 0; i < 5; i++)
+    {
+      unsigned short bit = letters[which_letter][i];
+      for (j = 0; j < 15; j++)
+	{
+	  char colour = colour_array[(((i * offset2) >> 6) + j + offset) & 63];
+
+	  if (letter && (bit & 1))
+	    colour = 7;
+
+	  palette[j * 5 + i] = ((j + 1) << 4) | colour;
+	  bit >>= 1;
+	}
+    }
+}
+
 int
 main (void)
 {
   unsigned int startblk, xblk, yblk;
+  unsigned int i = 0, q = 0;
+  unsigned int frameno = 0;
 
   setmode (2);
+  
+  osfile_load ("palswch\r", (void*) 0x2000);
 
-  for (startblk = 0; startblk < 9; startblk++)
+  for (i = 1; i < 16; i++)
+    setpalette (i, i & 1);
+
+  for (yblk = 0; yblk < 5; yblk++)
     {
-      const char pos[9][2] = { { 4, 0 }, { 3, 0 }, { 2, 0 }, { 1, 0 }, { 0, 0 },
-			       { 0, 1 }, { 0, 2 }, { 0, 3 }, { 0, 4 } };
+      unsigned char ytop = yblk * 53;
 
-      xblk = pos[startblk][0];
-      yblk = pos[startblk][1];
-
-      while (xblk < 5 && yblk < 5)
+      for (xblk = 0; xblk < 5; xblk++)
 	{
 	  unsigned char col_base = 1 + 3 * xblk, col_plus = 0;
           unsigned int xlhs = xblk * 33;
-	  unsigned char ytop = yblk * 53;
 
 	  box (xlhs, ytop, col_base);
-
-	  xblk++;
-	  yblk++;
 	}
     }
+
+  init_palette ();
+
+  start_effect ();
+
+  while (1)
+    {
+      if (frameno >= 150 && frameno < 200)
+	set_palette (i, q, true, 0);
+      else if (frameno >= 250 && frameno < 300)
+        set_palette (i, q, true, 1);
+      else if (frameno >= 350 && frameno < 400)
+        set_palette (i, q, true, 2);
+      else if (frameno >= 450 && frameno < 500)
+        set_palette (i, q, true, 0);
+      else
+        set_palette (i, q, false, 0);
+
+      i++;
+      q += 7;
+      
+      wait_for_vsync ();
+      frameno++;
+    }
+
+  finish_effect ();
 
   return 0;
 }

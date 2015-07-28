@@ -26,8 +26,15 @@ if [ ! -x "$PASTA" ] || [ ! -x "$BBCIM" ]; then
   exit 1
 fi
 
+VGMPROC="$(readlink -f ../mode-infinity/vgmproc/vgmproc)"
+if [ ! -x "$VGMPROC" ]; then
+  echo "vgmproc missing from $VGMPROC (build mode-infinity)"
+  exit 1
+fi
+
 export PASTA
 export BBCIM
+export VGMPROC
 
 DEMONAME=chunkydemo
 
@@ -61,6 +68,13 @@ popd
 pushd scroll
 ./compile.sh
 popd
+
+pushd vgmplayer
+./compile.sh
+popd
+
+rm -f '!boot'
+unix2mac -n 'boot.in' '!boot'
 
 cp -f '!boot' '!boot.inf' "$OUTPUTDISK"
 

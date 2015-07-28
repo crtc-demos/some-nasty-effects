@@ -3,6 +3,8 @@
 	.alias SCREENSTART $7C00
 	.temps $70..$7f
 
+	.alias RINGTAB_PAGE $30
+
 	.alias which_irq $60
 
 start:
@@ -22,6 +24,9 @@ start:
 	sta ULACONTROL
 	cli
 
+
+	.if RINGTAB_PAGE = $80
+
 	lda #BANK0
 	jsr select_sram
 	
@@ -29,6 +34,12 @@ start:
 	ldy #>$8000
 	lda #64
 	jsr copy_to_sram
+
+	.else
+
+	jsr clone_ringtab
+
+	.endif
 
 	jsr setup
 
@@ -545,12 +556,55 @@ loop:
 	rts
 	.ctxend
 
+	.context clone_ringtab
+	.var2 tmp
+clone_ringtab
+	lda #0
+	sta %tmp
+	lda #$30
+	sta %tmp+1
+outer:
+	ldy #0
+inner:
+	; Regular screen RAM in main memory
+	lda ACCCON
+	and #~4
+	sta ACCCON
+	
+	lda (%tmp),y
+	tax
+	
+	; Shadow screen RAM in main memory
+	lda ACCCON
+	ora #4
+	sta ACCCON
+	
+	txa
+	sta (%tmp),y
+	
+	iny
+	bne inner
+	
+	inc %tmp+1
+	lda %tmp+1
+	cmp #$30 + 32
+	bcc outer
+	
+	lda ACCCON
+	and #~4
+	sta ACCCON
+	
+	rts
+	.ctxend
+
 x_offset
 	.byte 0
 y_offset
 	.byte 0
 ring_topleft
 	.word 0
+ring_y_dir
+	.byte 1
 
 	.context plasma
 	.var2 rowptr
@@ -616,9 +670,11 @@ mod_store_0:
 
 	; And the odd bytes
 
+	.ifndef EMULATOR_MODE
 	lda %rowptr
 	eor #64
 	sta %rowptr
+	.endif
 
 	ldy #63
 xloop_1:
@@ -636,9 +692,11 @@ mod_store_1:
 	dey
 	bpl xloop_1
 
+	.ifndef EMULATOR_MODE
 	lda %rowptr
 	eor #64
 	sta %rowptr
+	.endif
 
 	inc %yidx
 	lda %yidx
@@ -663,8 +721,21 @@ noswitch
 	inc %rowptr+1
 done:	.)
 
-	inc mod_rings_0 + 2
-	inc mod_rings_1 + 2
+	.(
+	lda mod_rings_0 + 2
+	clc
+	adc ring_y_dir
+	cmp #[RINGTAB_PAGE + 32]
+	bcc no_flip
+	sec
+	sbc #[RINGTAB_PAGE + RINGTAB_PAGE + 64]
+	eor #255
+	ldx #255
+	stx ring_y_dir
+no_flip
+	sta mod_rings_0 + 2
+	sta mod_rings_1 + 2
+	.)
 
 	lda %yidx
 	cmp #32
@@ -694,6 +765,9 @@ repeat
 	inc ring_x+1
 nohi:	.)
 
+	lda #1
+	sta ring_y_dir
+
 	lda ring_y
 	clc
 	adc #33
@@ -712,7 +786,17 @@ nohi:	.)
 	cmp #$80
 	ror
 	clc
-	adc #[$80 + 32 - 16]
+	adc #[RINGTAB_PAGE + 32 - 16]
+	.(
+	cmp #[RINGTAB_PAGE + 32]
+	bcc no_flip
+	sec
+	sbc #[RINGTAB_PAGE + RINGTAB_PAGE + 64]
+	eor #255
+	ldx #255
+	stx ring_y_dir
+no_flip
+	.)
 	sta ring_topleft+1
 
 	ldx ring_x+1

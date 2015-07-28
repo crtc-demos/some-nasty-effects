@@ -1,1 +1,1 @@
-*|disco*load sinlogs 2B00*load l.logs 2C00*scroll
+*|disco*|load sinlogs 2B00*|load l.logs 2C00*|scroll*|disco*demo

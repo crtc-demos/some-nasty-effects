@@ -193,10 +193,10 @@ moveToNextCharacter:
 	; case statement to get index from charcode
 	; we could just subtract 32, and define 63 codes, but that costs 2k of data!
 	cmp #65 : bcc notCapitalLetter
-		sec : sbc #65 : @sec_implied : bcs gotIndex
+		sec : sbc #65 : bra gotIndex
 	notCapitalLetter:
 	cmp #48 : bcc notNumber
-		sec : sbc #48-26 : @sec_implied : bcs gotIndex
+		sec : sbc #48-26 : bra gotIndex
 	notNumber:
 	cmp #0 : bne notEnd
 		; End of string, go back to start and retry
@@ -605,10 +605,8 @@ shiftScroller:
 	; TODO: The new fillXRowsFrom is overkill for this!
 	@fillXRowsFrom %plotPos, %offset
 
-	.ifdef WOBBLE_HEIGHT
-	.ifndef WOBBLE_TOP_WITH_HEIGHT
+	.if .defined(WOBBLE_HEIGHT) & ~.defined(WOBBLE_TOP_WITH_HEIGHT)
 	lda #128 : sta %currentRemainder
-	.endif
 	.endif
 
 	lda #0 : sta %block
@@ -872,39 +870,23 @@ shiftScroller:
 	; dec colorWobble
 
 	; Set low byte (R13) register
-	@vdu 23
-	@vdu 0
-	@vdu 13
+	lda #13
+	sta CRTC_ADDR
 	lda scrollRegisters
-	jsr oswrch
-	lda #0
-	jsr oswrch
-	jsr oswrch
-	jsr oswrch
-	jsr oswrch
-	jsr oswrch
-	jsr oswrch
-	jsr oswrch
+	sta CRTC_DATA
 
 	; Set high byte of HW scroll register
-	@vdu 23
-	@vdu 0
-	@vdu 12
+	lda #12
+	sta CRTC_ADDR
 	lda scrollRegisters+1
-	jsr oswrch
-	lda #0
-	jsr oswrch
-	jsr oswrch
-	jsr oswrch
-	jsr oswrch
-	jsr oswrch
-	jsr oswrch
-	jsr oswrch
+	sta CRTC_DATA
 
 	rts
 
 .)
 .ctxend
+
+.include "../lib/mos.s"
 
 frameCounter
 	.dword 0

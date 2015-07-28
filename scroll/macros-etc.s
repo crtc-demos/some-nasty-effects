@@ -1,7 +1,3 @@
-	.alias oswrch $ffee
-	.notemps oswrch
-	.alias osbyte $fff4
-	.notemps osbyte
 
 ; It_s rather ugly with the rts, but it_s also unneccessary to use a jmp.
 
