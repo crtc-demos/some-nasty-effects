@@ -325,11 +325,27 @@ let mixes () =
   done;
   arr
 
+let inv_gamma = 1.7
+let border = 0.1
+
 let get_rgb img x y =
-  match img with
-    Images.Rgb24 i -> Rgb24.get i x y
-  | Images.Rgba32 i -> (Rgba32.get i x y).Color.color
-  | _ -> failwith "Not an RGB/RGBA image"
+  let col =
+    match img with
+      Images.Rgb24 i -> Rgb24.get i x y
+    | Images.Rgba32 i -> (Rgba32.get i x y).Color.color
+    | _ -> failwith "Not an RGB/RGBA image" in
+  let fr = float_of_int col.Color.Rgb.r /. 255.0
+  and fg = float_of_int col.Color.Rgb.g /. 255.0
+  and fb = float_of_int col.Color.Rgb.b /. 255.0 in
+  let gr = fr ** inv_gamma
+  and gg = fg ** inv_gamma
+  and gb = fb ** inv_gamma in
+  let cr = border +. (1.0 -. border *. 2.0) *. gr
+  and cg = border +. (1.0 -. border *. 2.0) *. gg
+  and cb = border +. (1.0 -. border *. 2.0) *. gb in
+  int_of_float (cr *. 255.0),
+  int_of_float (cg *. 255.0),
+  int_of_float (cb *. 255.0)
 
 let ordered_dither x y r g b =
   let dx = x land 1 and dy = y land 1 in
@@ -501,9 +517,9 @@ let multimix img mixes section randomness previous_palette cutoff =
       let y = section * chunksize + row in
       for pix = 0 to 3 do
 	let x = byte * 4 + pix in
-	let col = get_rgb img x y in
+	let orig_r, orig_g, orig_b = get_rgb img x y in
 	let cr, cg, cb =
-	  let bias_r =
+	  (*let bias_r =
 	    if r_randomness > 0 then
 	      (Random.int r_randomness) - r_randomness / 2
 	    else 0
@@ -514,10 +530,14 @@ let multimix img mixes section randomness previous_palette cutoff =
 	  and bias_b =
 	    if b_randomness > 0 then
 	      (Random.int b_randomness) - b_randomness / 2 
-	    else 0 in
-	clamp (col.Color.Rgb.r + bias_r),
-	clamp (col.Color.Rgb.g + bias_g),
-	clamp (col.Color.Rgb.b + bias_b) in
+	    else 0 in *)
+	  let rnd = (Random.int 256) - 128 in
+	  let bias_r = (rnd * r_randomness) / 256
+	  and bias_g = (rnd * g_randomness) / 256
+	  and bias_b = (rnd * b_randomness) / 256 in
+	clamp (orig_r + bias_r),
+	clamp (orig_g + bias_g),
+	clamp (orig_b + bias_b) in
 	let r' = cr / 52 and g' = cg / 52 and b' = cb / 52 in
 	let idx = b' * 25 + g' * 5 + r' in
 	idxlist := !idxlist @ [idx]
@@ -603,10 +623,10 @@ let attempt img mixes section previous_palette xmask randomness mixno fast_mode
       for pix = 0 to 3 do
 	let x = byte * 4 + pix
 	and y = section * chunksize + row in
-	let col = get_rgb img (x land (lnot xmask)) y in
+	let orig_r, orig_g, orig_b = get_rgb img (x land (lnot xmask)) y in
 	let cr, cg, cb =
 	  if random_dither then begin
-	    let bias_r =
+	    (*let bias_r =
 	      if r_randomness > 0 then
 		(Random.int r_randomness) - r_randomness / 2
 	      else 0
@@ -617,18 +637,22 @@ let attempt img mixes section previous_palette xmask randomness mixno fast_mode
 	    and bias_b =
 	      if b_randomness > 0 then
 		(Random.int b_randomness) - b_randomness / 2 
-	      else 0 in
-	    let cr = clamp (col.Color.Rgb.r + bias_r)
-	    and cg = clamp (col.Color.Rgb.g + bias_g)
-	    and cb = clamp (col.Color.Rgb.b + bias_b) in
+	      else 0 in *)
+	    let rnd = (Random.int 256) - 128 in
+	    let bias_r = (rnd * r_randomness) / 256
+	    and bias_g = (rnd * g_randomness) / 256
+	    and bias_b = (rnd * b_randomness) / 256 in
+	    let cr = clamp (orig_r + bias_r)
+	    and cg = clamp (orig_g + bias_g)
+	    and cb = clamp (orig_b + bias_b) in
 	    cr, cg, cb
 	  end else begin
 	    let this_r =
-	      clamp (col.Color.Rgb.r + int_of_float these_errors_r.(x))
+	      clamp (orig_r + int_of_float these_errors_r.(x))
 	    and this_g =
-	      clamp (col.Color.Rgb.g + int_of_float these_errors_g.(x))
+	      clamp (orig_g + int_of_float these_errors_g.(x))
 	    and this_b =
-	      clamp (col.Color.Rgb.b + int_of_float these_errors_b.(x)) in
+	      clamp (orig_b + int_of_float these_errors_b.(x)) in
 	    let selected_r, selected_g, selected_b =
 	      if not plain_fs then
 	        (this_r / 52) * 52,

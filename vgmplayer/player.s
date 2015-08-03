@@ -1,6 +1,10 @@
-	.org $e00
-		
-	.temps $50..$5f, $68..$6f
+	.org $2700
+
+	.alias zp_base $50
+
+	.temps zp_base+8..zp_base+17
+	
+	.if 0
 start:
 	jsr initialize
 loop:
@@ -8,6 +12,7 @@ loop:
 	lda #19
 	jsr osbyte
 	bra loop
+	.endif
 	
 header:
 	jmp initialize
@@ -26,8 +31,8 @@ header:
 	.alias song_looppoint tune+8
 	.alias song_end tune+10
 
-	.alias playpos $60
-	.alias beatpos $62
+	.alias playpos zp_base
+	.alias beatpos zp_base+2
 
 initialize:
 	@load_file_to songname, $3000
@@ -69,9 +74,9 @@ deinitialize:
 	jsr select_old_lang
 	rts
 
-	.alias src $63
-	.alias dst $65
-	.alias tmp $67
+	.alias src zp_base+3
+	.alias dst zp_base+5
+	.alias tmp zp_base+7
 
 	; Copy A*256 bytes from $3000 to $1200. Entry with shadow bank in
 	; memory space.

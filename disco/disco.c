@@ -26,6 +26,18 @@ osword (unsigned char code, unsigned char *parameters)
 			: "memory");
 }
 
+static void
+oscli (unsigned char *cmd)
+{
+  unsigned char cmd_lo = ((unsigned short) cmd) & 0xff;
+  unsigned char cmd_hi = (((unsigned short) cmd) >> 8) & 0xff;
+  unsigned char dma, dmx, dmy;
+  __asm__ __volatile__ ("jsr $fff7"
+			: "=Aq" (dma), "=xq" (dmx), "=yq" (dmy)
+			: "xq" (cmd_lo), "yq" (cmd_hi)
+			: "memory");
+}
+
 static unsigned char osfile_params[18];
 
 static unsigned char
@@ -89,6 +101,29 @@ static void
 wait_for_vsync (void)
 {
   void (*fn) (void) = dispatch_table[2];
+  fn ();
+}
+
+#define PLAYER_CODE 0x2700
+
+static void
+load_tune (void)
+{
+  void (*fn) (void) = (void (*) (void)) PLAYER_CODE;
+  fn ();
+}
+
+static void
+poll_tune (void)
+{
+  void (*fn) (void) = (void (*) (void)) PLAYER_CODE + 3;
+  fn ();
+}
+
+static void
+eventv_tune (void)
+{
+  void (*fn) (void) = (void (*) (void)) PLAYER_CODE + 12;
   fn ();
 }
 
@@ -267,6 +302,8 @@ main (void)
   unsigned int i = 0, q = 0;
   unsigned int frameno = 0;
 
+  load_tune ();
+
   setmode (2);
   
   osfile_load ("palswch\r", (void*) 0x2000);
@@ -291,8 +328,10 @@ main (void)
 
   start_effect ();
 
-  while (1)
+  for (; frameno < 700; frameno++)
     {
+      poll_tune ();
+
       if (frameno >= 150 && frameno < 200)
 	set_palette (i, q, true, 0);
       else if (frameno >= 250 && frameno < 300)
@@ -312,6 +351,9 @@ main (void)
     }
 
   finish_effect ();
+  
+  eventv_tune ();
+  oscli ("run showimg\r");
 
   return 0;
 }

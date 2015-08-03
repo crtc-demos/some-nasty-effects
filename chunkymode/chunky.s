@@ -12,7 +12,9 @@ start:
 	lda #1
 	jsr mos_setmode
 
+	@shadow_screen_in_ram
 	@load_file_to rings, 0x3000
+	@main_screen_in_ram
 
 	; This appears to realign the ULA's 1MHz output. Who knows how!
 	lda #19
@@ -30,16 +32,33 @@ start:
 	lda #BANK0
 	jsr select_sram
 	
-	ldx #<$8000
-	ldy #>$8000
-	lda #64
-	jsr copy_to_sram
+	;ldx #<$8000
+	;ldy #>$8000
+	;lda #64
+	;jsr copy_to_sram
 
 	.else
+
+	lda #<$3000
+	sta %decompress_lz4.input
+	lda #>$3000
+	sta %decompress_lz4.input+1
+	
+	lda #<$3000
+	sta %decompress_lz4.output
+	lda #>$3000
+	sta %decompress_lz4.output+1
+	
+	jsr decompress_lz4
 
 	jsr clone_ringtab
 
 	.endif
+
+	jsr player_vsync_disable
+	
+	lda #BANK0
+	jsr select_sram
 
 	jsr setup
 
@@ -56,12 +75,17 @@ stuck:
 	.)
 
 rings
-	.asc "rings",13
+	.asc "z.rings",13
+
+	.alias FROM_SHADOW_RAM -1
 
 	.include "../lib/mos.s"
 	.include "../lib/sram.s"
 	.include "../lib/srambanks.s"
 	.include "../lib/load.s"
+	.include "../lib/player.s"
+	.include "../lib/cmp.s"
+	.include "../palsearch/lz4.s"
 
 	.include "sintab.s"
 
@@ -144,7 +168,7 @@ setup
 	.alias half_rows 16
 
 	.alias new_frame 64*char_rows*10 - 64*2 + 24
-	.alias shadow_switch 64*char_rows*half_rows - 64*3
+	.alias shadow_switch 64*char_rows*half_rows - 64*2
 	.alias mid_2nd_frame 64*char_rows*[half_rows/2]
 
 irq1:
@@ -174,6 +198,16 @@ timer1
 	beq first_after_vsync
 	cmp #1
 	beq second_frame_start
+	;cmp #2
+	;bne next_irq
+
+	;lda #99
+	;sta USR_T1C_L
+	;sta USR_T1C_H
+
+	; disable usr timer1 interrupt
+	lda #0b01000000
+	sta USR_IER
 
 	; This is the middle of the 2nd frame (lower part of the screen).
 	; Set up registers right for it.
@@ -181,9 +215,11 @@ timer1
 	@crtc_write 6, {#half_rows}
 	@crtc_write 7, {#26}
 
-	; disable usr timer1 interrupt
-	lda #0b01000000
-	sta USR_IER
+	.(
+	inc vsync_counter
+	bne nohi
+	inc vsync_counter+1
+nohi:	.)
 
 	;lda #0b00000111 ^ 5 : sta PALCONTROL
 
@@ -196,15 +232,20 @@ first_after_vsync
 	@crtc_write 6, {#half_rows}
 	@crtc_write 7, {#255}
 
+	lda #<mid_2nd_frame
+	sta USR_T1L_L
+	lda #>mid_2nd_frame
+	sta USR_T1L_H
+
 	;lda #0b00000111 ^ 4 : sta PALCONTROL
 
 	bra next_irq
 
 second_frame_start
-	lda #<mid_2nd_frame
-	sta USR_T1C_L
-	lda #>mid_2nd_frame
-	sta USR_T1C_H
+
+	lda #99
+	sta USR_T1L_L
+	sta USR_T1L_H
 
 	; Screen uses shadow RAM
 	lda ACCCON
@@ -261,6 +302,11 @@ vsync
 	sta $fc
 	rti
 	.)
+
+vsync_counter
+	.word 1
+vsync_counter_done
+	.word 0
 
 oldirq1v
 	.word 0
@@ -735,6 +781,30 @@ done:	.)
 no_flip
 	sta mod_rings_0 + 2
 	sta mod_rings_1 + 2
+	.)
+
+	.(
+again:
+	sei
+	lda vsync_counter
+	ldx vsync_counter+1
+	cli
+	
+	cmp vsync_counter_done
+	bne some_update
+	cpx vsync_counter_done+1
+	beq no_update
+some_update:
+	jsr player_poll
+	
+	.(
+	inc vsync_counter_done
+	bne nohi
+	inc vsync_counter_done+1
+nohi:	.)
+	bra again
+	
+no_update:
 	.)
 
 	lda %yidx

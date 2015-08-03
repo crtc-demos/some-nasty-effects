@@ -1,11 +1,11 @@
-	; player entry points. Must keep in sync with list in vgmp.s!
-	.alias player_init $e00
-	.alias player_poll_noirq $e03
-	.alias player_poll_irq $e06
-	.alias player_vsync_event_enable $e09
-	.alias player_vsync_event_disable $e0c
-	.alias player_select_sram $e0f
-	.alias player_unselect_sram $e12
+	.alias player_base $2700
+	.alias player_zp_base $50
 
-	; a global variable! Use for timing. Disable interrupts to read safely!
-	.alias player_frame_no $28
+	; player entry points. Must keep in sync with list in vgmp.s!
+	.alias player_init		player_base
+	.alias player_poll		player_base + 3
+	.alias player_deinit		player_base + 6
+	.alias player_vsync_enable	player_base + 12
+	.alias player_vsync_disable	player_base + 15
+
+	.notemps player_poll

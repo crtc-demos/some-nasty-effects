@@ -9,6 +9,8 @@
 	sta CRTC_DATA
 	.mend
 	
+	.alias WITH_TUNE -1
+	
 entry_point:
 	.(
 
@@ -19,18 +21,173 @@ entry_point:
 	@crtc_write 8, {#0b11000000}
 	@crtc_write 7, {#34}
 
-	@load_file_to nice_picture, $2b70
+	;; First pic
+
+	@shadow_screen_in_ram
+	@load_file_to pic_0, $3000
+	@main_screen_in_ram
+	
+	jsr do_decompress
+
+	.ifdef WITH_TUNE
+	jsr player_vsync_disable
+
+	lda #BANK0
+	sta $f4
+	sta $fe30
+	.endif
 
 	jsr initvsync
+
+	@wait_for $8b00
 	
-loop_forever
-	jmp loop_forever
+	jsr deinit_effect
+	jsr player_vsync_enable
+	
+	;; Second pic
+	
+	@shadow_screen_in_ram
+	@load_file_to pic_1, $3000
+	@main_screen_in_ram
+	
+	jsr do_decompress
+	
+	jsr player_vsync_disable
+	jsr initvsync
+	
+	@wait_for $8c00
+	
+	jsr deinit_effect
+	jsr player_vsync_enable
+
+	;; Third pic
+	
+	@shadow_screen_in_ram
+	@load_file_to pic_2, $3000
+	@main_screen_in_ram
+	
+	jsr do_decompress
+	
+	jsr player_vsync_disable
+	jsr initvsync
+	
+	@wait_for $8d00
+	
+	jsr deinit_effect
+	jsr player_vsync_enable
+
+	;; Fourth pic
+	
+	@shadow_screen_in_ram
+	@load_file_to pic_3, $3000
+	@main_screen_in_ram
+	
+	jsr do_decompress
+	
+	jsr player_vsync_disable
+	jsr initvsync
+	
+	@wait_for $8e00
+	
+	jsr deinit_effect
+	jsr player_vsync_enable
+
+	;; Run next effect
+	
+	ldx #<next_effect
+	ldy #>next_effect
+	jsr oscli
 	
 	rts
 	.)
 
-nice_picture
-	.asc "prrtdmp",13
+	.context do_decompress
+do_decompress:
+	lda #<$3000
+	sta %decompress_lz4.input
+	lda #>$3000
+	sta %decompress_lz4.input+1
+	
+	lda #<$2b70
+	sta %decompress_lz4.output
+	lda #>$2b70
+	sta %decompress_lz4.output+1
+	
+	jsr decompress_lz4
+
+	rts
+	.ctxend
+
+	.context wait
+	.var2 time
+wait
+	.(
+loop_for_a_bit
+	lda framectr
+
+	.(
+wait_for_vsync
+	cmp framectr
+	beq wait_for_vsync
+	.)
+
+	.ifdef WITH_TUNE
+	jsr player_poll
+	.endif
+
+	sei
+	lda $50
+	sta playpos_copy
+	lda $51
+	sta playpos_copy+1
+	cli
+	
+	@if_leu_abs playpos_copy, %time, loop_for_a_bit
+	.)
+	rts
+	.ctxend
+	
+	.macro wait_for time
+	lda #<%time
+	sta %wait.time
+	lda #>%time
+	sta %wait.time+1
+	jsr wait
+	.mend
+
+playpos_copy
+	.word 0
+
+pic_0
+	.asc "z.mduck",13
+pic_1
+	.asc "z.frog",13
+pic_2
+	.asc "z.cham",13
+pic_3
+	.asc "z.parrot",13
+
+intens_pal
+	.byte 0
+	.byte 4
+	.byte 1
+	.byte 5
+	.byte 2
+	.byte 6
+	.byte 3
+	.byte 7
+inv_intens_pal
+	.byte 0
+	.byte 2
+	.byte 5
+	.byte 6
+	.byte 1
+	.byte 3
+	.byte 5
+	.byte 7
+
+next_effect
+	.asc "demo",13
 
 curs1:
 	.word 0
@@ -43,11 +200,15 @@ frameno:
 vsync_ours:
 	.byte 0xff
 
+	.alias FROM_SHADOW_RAM -1
+
+	.include "lz4.s"
 	.include "../lib/mos.s"
 	.include "../lib/sram.s"
 	.include "../lib/load.s"
 	.include "../lib/srambanks.s"
 	.include "../lib/cmp.s"
+	.include "../lib/player.s"
 
 initvsync
 	.(
@@ -164,6 +325,8 @@ old_sys_acr
 old_usr_ier
 	.byte 0
 
+.alias framectr $8e
+
 .alias index $8f
 
 irq1:	.(
@@ -190,12 +353,6 @@ timer1
 	phx
 	phy
 
-	; Latch next timeout
-	lda #<[64*2-2]
-	sta USR_T1L_L
-	lda #>[64*2-2]
-	sta USR_T1L_H
-
 	; This is supposed to happen within the h-blanking period.
 palette_write:
 	ldx #0b11100111
@@ -214,15 +371,19 @@ palette_write:
 	; longer.
 	ldx index
 
-	cpx #127
 	.(
+	cpx #126
+	bne not_penultimate
+	lda #255
+	sta USR_T1L_L
+	sta USR_T1L_H
+	bra not_last
+not_penultimate
+	cpx #127
 	bne not_last
 	; Disable usr timer1 interrupt
 	lda #0b01000000
 	sta USR_IER
-	lda #255
-	sta USR_T1L_L
-	sta USR_T1L_H
 	bra exit_irq
 not_last
 	.)
@@ -247,21 +408,19 @@ exit_irq:
 	sta $fc
 	rti
 
-fliptime
-	;.word 64 * 34 + 29
-	.word 64 * 34 + 57
+	.alias fliptime 64 * 38 + 28
 
 vsync
 	phx
 	phy
 
 	; Clear interrupt
-	lda USR_T1C_L
+	;lda USR_T1C_L
 
         ; Trigger after 'fliptime' microseconds
-        lda fliptime
+        lda #<fliptime
         sta USR_T1C_L
-        lda fliptime+1
+        lda #>fliptime
         sta USR_T1C_H
 
 	lda #<[64*2-2]
@@ -278,7 +437,7 @@ vsync
 	ora #0b01000000
 	sta USR_ACR
        
-	lda #0
+	lda #1
 	sta index
 
 	; Enable usr timer1 interrupt
@@ -286,14 +445,25 @@ vsync
 	sta USR_IER
 
 	.(
-	ldx #0
+	ldx #15
 firstrow
 	lda $2b70,x
 	sta PALCONTROL
-	inx
-	cpx #16
-	bne firstrow
+	dex
+	bpl firstrow
 	.)
+
+	lda $2f00 : sta palette_write+1
+	lda $2f80 : sta palette_write+3
+	lda $2b80 : sta palette_write+5
+	lda $2c00 : sta palette_write+10
+	lda $2c80 : sta palette_write+15
+	lda $2d00 : sta palette_write+20
+	lda $2d80 : sta palette_write+25
+	lda $2e00 : sta palette_write+30
+	lda $2e80 : sta palette_write+35
+
+	inc framectr
 
 	; gtfo
 	ply
