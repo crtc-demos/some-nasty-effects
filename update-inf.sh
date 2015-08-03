@@ -26,7 +26,7 @@ if ! [ "$type" ]; then
   type="TYPE=1"
 fi
 
-orig_filename=${filename#$.}
+orig_filename="$(basename "$INF" .inf)"
 
 pushd "$(dirname "$INF")" >& /dev/null
 actual_size="$(stat -c "%s" "$orig_filename")"
