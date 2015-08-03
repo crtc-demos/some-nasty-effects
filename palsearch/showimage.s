@@ -21,11 +21,36 @@ entry_point:
 	@crtc_write 8, {#0b11000000}
 	@crtc_write 7, {#34}
 
+	;; Nothingth pic
+	@shadow_screen_in_ram
+	@load_file_to nasty, $3000
+	@main_screen_in_ram
+	
+	lda #<$3000
+	sta %decompress_lz4.input
+	lda #>$3000
+	sta %decompress_lz4.input+1
+	
+	lda #<$3000
+	sta %decompress_lz4.output
+	lda #>$3000
+	sta %decompress_lz4.output+1
+	
+	jsr decompress_lz4
+
 	;; First pic
 
 	@shadow_screen_in_ram
 	@load_file_to pic_0, $3000
 	@main_screen_in_ram
+	
+	lda #0
+	sta timer
+loop
+	lda #19
+	jsr osbyte
+	inc timer
+	bne loop
 	
 	jsr do_decompress
 
@@ -39,7 +64,7 @@ entry_point:
 
 	jsr initvsync
 
-	@wait_for $8b00
+	@wait_for $9000
 	
 	jsr deinit_effect
 	jsr player_vsync_enable
@@ -55,7 +80,7 @@ entry_point:
 	jsr player_vsync_disable
 	jsr initvsync
 	
-	@wait_for $8c00
+	@wait_for $9100
 	
 	jsr deinit_effect
 	jsr player_vsync_enable
@@ -71,11 +96,12 @@ entry_point:
 	jsr player_vsync_disable
 	jsr initvsync
 	
-	@wait_for $8d00
+	@wait_for $9200
 	
 	jsr deinit_effect
 	jsr player_vsync_enable
 
+	.if 0
 	;; Fourth pic
 	
 	@shadow_screen_in_ram
@@ -87,7 +113,8 @@ entry_point:
 	jsr player_vsync_disable
 	jsr initvsync
 	
-	@wait_for $8e00
+	@wait_for $9300
+	.endif
 	
 	jsr deinit_effect
 	jsr player_vsync_enable
@@ -100,6 +127,9 @@ entry_point:
 	
 	rts
 	.)
+
+timer
+	.byte 0
 
 	.context do_decompress
 do_decompress:
@@ -158,13 +188,16 @@ wait_for_vsync
 playpos_copy
 	.word 0
 
+nasty
+	.asc "z.nasty",13
+
 pic_0
 	.asc "z.mduck",13
 pic_1
 	.asc "z.frog",13
+;pic_2
+;	.asc "z.cham",13
 pic_2
-	.asc "z.cham",13
-pic_3
 	.asc "z.parrot",13
 
 intens_pal
@@ -408,7 +441,7 @@ exit_irq:
 	sta $fc
 	rti
 
-	.alias fliptime 64 * 38 + 28
+	.alias fliptime 64 * 38 + 29
 
 vsync
 	phx

@@ -68,9 +68,11 @@ start:
 	jsr initvsync
 	;jsr filltest
 	jsr plasma_loop
-stuck:
-	jmp stuck
 	jsr deinit_effect
+	
+	lda #7
+	jsr mos_setmode
+
 	rts
 	.)
 
@@ -304,7 +306,7 @@ vsync
 	.)
 
 vsync_counter
-	.word 1
+	.word 0
 vsync_counter_done
 	.word 0
 
@@ -887,6 +889,10 @@ no_flip
 	sbc #0
 	sta %y_partial+1
 	sta y_offset
-	bra repeat
+	
+	jsr player_tune_finished
+	cmp #0
+	beq repeat
+
 	rts
 	.ctxend

@@ -7,4 +7,5 @@ cp -r frgdmp3.lz4 frgdmp3.lz4.inf \
       cham.lz4 cham.lz4.inf \
       mduck2.lz4 mduck2.lz4.inf \
       prrtdmp.lz4 prrtdmp.lz4.inf \
+      nasty.lz4 nasty.lz4.inf \
       showimg showimg.inf "$OUTPUTDISK"

@@ -7,5 +7,7 @@
 	.alias player_deinit		player_base + 6
 	.alias player_vsync_enable	player_base + 12
 	.alias player_vsync_disable	player_base + 15
+	.alias player_tune_finished	player_base + 18
 
-	.notemps player_poll
+	.notemps player_poll, player_vsync_disable, player_vsync_enable
+	.notemps player_tune_finished

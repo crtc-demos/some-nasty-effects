@@ -21,6 +21,7 @@ header:
 	jmp copy_effect_from_shadow
 	jmp start_eventv
 	jmp stop_eventv
+	jmp is_finished
 
 	.alias tune $8000
 
@@ -658,13 +659,24 @@ nohi:	.)
 	
 	@if_ltu_abs playpos, song_end, finished
 	
+	.ifdef LOOPING
 	lda song_looppoint
 	sta playpos
 	lda song_looppoint+1
 	sta playpos+1
+	.else
+	lda #1
+	sta tune_finished
+	.endif
 	
 finished
 	.)
+	rts
+	.ctxend
+
+	.context is_finished
+is_finished
+	lda tune_finished
 	rts
 	.ctxend
 
@@ -675,6 +687,8 @@ finished
 old_eventv
 	.word 0
 old_rom
+	.byte 0
+tune_finished
 	.byte 0
 
 	.context eventv_handler

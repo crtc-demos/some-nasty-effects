@@ -9,7 +9,8 @@
 ; It would be preferable to put the lookups either before or after the program
 ; in memory.
 
-.alias sinLookup $2B00
+;.alias sinLookup $2B00
+.alias sinLookup $2600
 
 .alias lookupLog $2C00
 .alias lookupUnlog2 lookupLog + 256

@@ -12,12 +12,17 @@
 	.word entry_point
 	.word deinit_effect
 	.word wait_for_vsync
-	
-entry_point:
+	.word preinit_effect
+
+preinit_effect
 	.(
 	@crtc_write 7, {#34}
-
 	jsr mos_cursoroff
+	rts
+	.)
+
+entry_point:
+	.(
 	jsr initvsync
 	rts
 	.)

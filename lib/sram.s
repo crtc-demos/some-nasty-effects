@@ -4,6 +4,7 @@
 old_lang:
 	.byte 0
 
+	.notemps select_sram
 select_sram:
 	.(
 	pha
@@ -16,6 +17,7 @@ select_sram:
 	rts
 	.)
 
+	.notemps select_old_lang
 select_old_lang:
 	.(
 	lda old_lang

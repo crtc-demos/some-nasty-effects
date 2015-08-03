@@ -1,49 +1,24 @@
 
 ; It_s rather ugly with the rts, but it_s also unneccessary to use a jmp.
 
-.macro startScreenHack setupHack doPlot
-
-	; This macro does nothing if the effect/hack is being imported into a demo.
-	.ifndef _LOADED_DEMO2LIB
-	; However CONSIDER TODO: it could add its event handler to the global event array.
-	; But we will still need to call this routine for that to happen.
+.macro startScreenHack setupHack doPlot teardownHack
 
 	jsr %setupHack
 
-	.ifdef SHOW_FPS
-	jsr clearClock
-	.endif
+eventloop:
+	; vgmplayer
+	jsr player_poll
 
-	@interceptEvent 4, oldVector, myEvent
+	lda #19
+	jsr osbyte
 
-	rts
+	jsr %doPlot
 
-	; oldVector:    .word 0x0000
-	oldVector:    nop : nop
+	@incdword frameCounter
 
-	myEvent:
-		; vgmplayer
-		; jsr $e06
+	@if_ltu_imm frameCounter, 1250, eventloop
 
-		jsr %doPlot
-
-		@incdword frameCounter
-
-		; TODO: if we make the above loop 40x25 instead of 256*4, we could include the setupColors in that loop
-		; jsr setupColors
-		; OK now the screenblit only does the centre of the screen, so the color chars on the left are unaffected
-
-		;; Now assumed to be done by hack
-		; #ifdef SHOW_FPS
-		; jsr showfps
-		; #endif
-
-		leaveEvent:
-
-		rts
-
-	.endif
-
+	jmp %teardownHack
 .mend
 
 .macro vdu c

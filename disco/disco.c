@@ -104,6 +104,13 @@ wait_for_vsync (void)
   fn ();
 }
 
+static void
+prestart_effect (void)
+{
+  void (*fn) (void) = dispatch_table[3];
+  fn ();
+}
+
 #define PLAYER_CODE 0x2700
 
 static void
@@ -274,8 +281,52 @@ static unsigned short letters[][5] =
   },
 };
 
+#define C(X) ((X) ^ 7)
+
+const static unsigned char
+fades[48] =
+{
+  C(7), C(7), C(7), C(6), C(6), C(6), C(4), C(4), C(4), C(0), C(0), C(0),
+  C(7), C(7), C(7), C(3), C(3), C(3), C(1), C(1), C(1), C(0), C(0), C(0),
+  C(7), C(7), C(7), C(5), C(5), C(5), C(4), C(4), C(4), C(0), C(0), C(0),
+  C(7), C(7), C(7), C(6), C(6), C(6), C(2), C(2), C(2), C(0), C(0), C(0)
+};
+
+static unsigned char
+current[5][5];
+
+volatile unsigned char *beatpos = (unsigned char *) 0x52;
+volatile unsigned char *timer = (unsigned char *) 0xfe44;
+
 static void
-set_palette (int offset, int offset2, bool letter, char which_letter)
+pulse_boxes (void)
+{
+  unsigned int i, j, k;
+  
+  for (i = 0; i < 5; i++)
+    for (j = 0; j < 5; j++)
+      {
+        unsigned char num = *timer;
+
+	for (k = 0; k < 3; k++)
+	  {
+	    unsigned char phys = j * 3 + k;
+            palette[phys * 5 + i]
+	      = ((phys + 1) << 4) | fades[current[i][j] + k];
+	  }
+
+	if (current[i][j] != 9 && current[i][j] != 21 && current[i][j] != 33
+	    && current[i][j] != 45)
+	  current[i][j]++;
+
+	if (*beatpos == 0 && (num & 8))
+	  current[i][j] = (num & 3) * 12;
+      }
+}
+
+static void
+set_palette (int offset, int offset2, bool letter, char which_letter,
+	     bool fading, char fade_amount)
 {
   unsigned char i, j;
 
@@ -287,6 +338,9 @@ set_palette (int offset, int offset2, bool letter, char which_letter)
 	  char colour = colour_array[(((i * offset2) >> 6) + j + offset) & 63];
 
 	  if (letter && (bit & 1))
+	    colour = 7;
+	  
+	  if (fading && ((i ^ 5) + j) <= fade_amount)
 	    colour = 7;
 
 	  palette[j * 5 + i] = ((j + 1) << 4) | colour;
@@ -302,11 +356,14 @@ main (void)
   unsigned int i = 0, q = 0;
   unsigned int frameno = 0;
 
+  osfile_load ("player\r", (void *) 0x2700);
+  osfile_load ("palswch\r", (void*) 0x2000);
+
   load_tune ();
 
   setmode (2);
   
-  osfile_load ("palswch\r", (void*) 0x2000);
+  prestart_effect ();
 
   for (i = 1; i < 16; i++)
     setpalette (i, i & 1);
@@ -328,20 +385,26 @@ main (void)
 
   start_effect ();
 
-  for (; frameno < 700; frameno++)
+#define LOGO_TIME(X) ((X) + 850)
+
+  for (; frameno < 1500; frameno++)
     {
       poll_tune ();
 
-      if (frameno >= 150 && frameno < 200)
-	set_palette (i, q, true, 0);
-      else if (frameno >= 250 && frameno < 300)
-        set_palette (i, q, true, 1);
-      else if (frameno >= 350 && frameno < 400)
-        set_palette (i, q, true, 2);
-      else if (frameno >= 450 && frameno < 500)
-        set_palette (i, q, true, 0);
+      if (frameno < 768)
+        pulse_boxes ();
+      else if (frameno >= LOGO_TIME (0) && frameno < LOGO_TIME (50))
+	set_palette (i, q, true, 0, false, 0);
+      else if (frameno >= LOGO_TIME (100) && frameno < LOGO_TIME (150))
+        set_palette (i, q, true, 1, false, 0);
+      else if (frameno >= LOGO_TIME (200) && frameno < LOGO_TIME (250))
+        set_palette (i, q, true, 2, false, 0);
+      else if (frameno >= LOGO_TIME (300) && frameno < LOGO_TIME (350))
+        set_palette (i, q, true, 0, false, 0);
+      else if (frameno < 1400)
+        set_palette (i, q, false, 0, false, 0);
       else
-        set_palette (i, q, false, 0);
+        set_palette (i, q, false, 0, true, (frameno - 1400) >> 2);
 
       i++;
       q += 7;
@@ -353,7 +416,11 @@ main (void)
   finish_effect ();
   
   eventv_tune ();
-  oscli ("run showimg\r");
+  
+  osfile_load ("sinlogs\r", (void *) 0x2600);
+  osfile_load ("l.logs\r", (void *) 0x2c00);
+  oscli ("run scroll\r");
+  /*oscli ("run showimg\r");*/
 
   return 0;
 }

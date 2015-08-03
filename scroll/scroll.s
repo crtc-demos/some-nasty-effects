@@ -10,7 +10,7 @@
 
 .temps $70..$8f
 
-@startScreenHack setupScroller, shiftScroller
+@startScreenHack setupScroller, shiftScroller, shutdownScroller
 
 ; Needs to come before screenhack.spp
 .include "mode2.s"
@@ -112,11 +112,14 @@
 ; To save space, these could go in re-usable bits of memory, e.g. before screenBuf
 
 scrollerText:
-	.asc " !!! A BBC MICRO SQUIDGY SCROLLER FOR SUNDOWN 2012"
+	;.asc " !!! A BBC MICRO SQUIDGY SCROLLER FOR SUNDOWN 2012"
 	; .asc " !!! PROBABLY ONLY SCENERS CAN READ THIS !!! PLEASE ENTER CAPTCHA CODE !!! VERIFICATION FAILED ! HUMAN PRIVILEGES REVOKED"
 	; .asc " !!! NOW THE EDGES ARE SMOOTH BUT 50 FPS IS NOT SO EASY"
-	.asc " !!! WHICH 6502 ASSEMBLY INSTRUCTION IS THE MOST DEPRESSED? !!! !!! !!! EOR !!! !!!"
-	.asc " !!! WHAT DOES A 6502 PROCESSOR DO WHEN IT GETS TIRED? !!! !!! !!! IT TAKES A NOP !!! !!! !!!"
+	;.asc " !!! WHICH 6502 ASSEMBLY INSTRUCTION IS THE MOST DEPRESSED? !!! !!! !!! EOR !!! !!!"
+	;.asc " !!! WHAT DOES A 6502 PROCESSOR DO WHEN IT GETS TIRED? !!! !!! !!! IT TAKES A NOP !!! !!! !!!"
+	.asc " ..... WELCOME TO A NEW BBC MASTER DEMO FOR SUNDOWN 2015"
+	.asc " ... 'SOME NASTY EFFECTS'"
+	.asc " ... GREETINGS TO EVERYONE AT THE PARTY          "
 	.byte 0
 
 ; Pointer into scrollerText
@@ -154,6 +157,11 @@ setupScroller:
 	@mode 2
 	@hideCursor
 
+	jsr player_vsync_disable
+
+	lda #BANK0
+	jsr select_sram
+
 	; No we must set screenTop/8 aka screenTop>>3
 	; Is that mask useful?  scrollRegisters+0 is usually 0 anyway :P
 	jsr resetScrollRegisters
@@ -177,6 +185,18 @@ setupScroller:
 .)
 .ctxend
 
+	.context shutdownScroller
+shutdownScroller
+	jsr player_vsync_enable
+
+	ldx #<next_effect
+	ldy #>next_effect
+	jsr oscli
+	.ctxend
+
+next_effect
+	.asc "run showimg",13
+
 resetTextLooper:
 	lda #<scrollerText : sta positionInText
 	lda #>scrollerText : sta positionInText+1
@@ -192,22 +212,40 @@ moveToNextCharacter:
 	ldy #0 : lda (%positionInTextZP),y
 	; case statement to get index from charcode
 	; we could just subtract 32, and define 63 codes, but that costs 2k of data!
-	cmp #65 : bcc notCapitalLetter
-		sec : sbc #65 : bra gotIndex
-	notCapitalLetter:
-	cmp #48 : bcc notNumber
-		sec : sbc #48-26 : bra gotIndex
-	notNumber:
-	cmp #0 : bne notEnd
-		; End of string, go back to start and retry
-		jsr resetTextLooper
-		jmp moveToNextCharacter
-	notEnd:
-	; cmp #32 : bne notSpace
-		; lda #26+10 : jmp gotIndex
-	; notSpace:
-		; A space or a . or something
-		clc : adc #26+10-32
+	cmp #65
+	bcc notCapitalLetter
+	sec
+	sbc #65
+	bra gotIndex
+notCapitalLetter:
+	cmp #48
+	bcc notNumber
+	sec
+	sbc #48-26
+	bra gotIndex
+notNumber:
+	cmp #0
+	bne notEnd
+
+	; End of string, go back to start and retry
+	jsr resetTextLooper
+	jmp moveToNextCharacter
+notEnd:
+	cmp #32
+	bne notSpace
+	lda #26+10
+	bra gotIndex
+notSpace:
+	cmp #'.'
+	bne notDot
+	lda #26+10+1
+	bra gotIndex
+notDot:
+	cmp #'\''
+	bne notQuote
+	lda #26+10+2
+notQuote:
+
 	gotIndex:
 	; fontCharInMem=fontStart+fontCharSize*fontByteCols*index
 	;                     ceil pixel width/8
@@ -887,6 +925,10 @@ shiftScroller:
 .ctxend
 
 .include "../lib/mos.s"
+.include "../lib/player.s"
+.include "../lib/sram.s"
+.include "../lib/srambanks.s"
+.include "../lib/cmp.s"
 
 frameCounter
 	.dword 0
