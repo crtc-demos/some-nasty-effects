@@ -73,6 +73,9 @@ start:
 	lda #7
 	jsr mos_setmode
 
+stop_here
+	jmp stop_here
+
 	rts
 	.)
 
