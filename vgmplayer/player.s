@@ -477,6 +477,12 @@ skip:
 	.var2 pitchenvpos
 	.var2 volenvpos, tmp
 poll:
+	.(
+	lda tune_finished
+	beq not_finished
+	rts
+not_finished
+	.)
 	lda beatpos
 	bne continue_beat
 
@@ -670,9 +676,25 @@ nohi:	.)
 	.endif
 	
 finished
+	lda #10
+	sta CRTC_ADDR
+	ldx beatpos
+	lda beat_pulse,x
+	sta CRTC_DATA
+	lda #11
+	sta CRTC_ADDR
+	lda #7
+	sta CRTC_DATA
+	
 	.)
 	rts
+
+beat_pulse
+	.byte 0, 1, 2, 2, 3, 3, 4, 4
+	.byte 4, 4, 5, 5, 5, 5, 6, 6
+	.byte 7, 7, 7, 7, 7, 7, 7, 5
 	.ctxend
+
 
 	.context is_finished
 is_finished

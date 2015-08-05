@@ -1,6 +1,6 @@
-	.org $e03
+	.org $e00
 
-	.temps $70..$7f
+	.temps $70..$82
 
 	.macro crtc_write addr data
 	lda #%addr
@@ -21,6 +21,7 @@ entry_point:
 	@crtc_write 8, {#0b11000000}
 	@crtc_write 7, {#34}
 
+	.ifdef WITH_TUNE
 	;; Nothingth pic
 	@shadow_screen_in_ram
 	@load_file_to nasty, $3000
@@ -37,6 +38,7 @@ entry_point:
 	sta %decompress_lz4.output+1
 	
 	jsr decompress_lz4
+	.endif
 
 	;; First pic
 
@@ -44,6 +46,7 @@ entry_point:
 	@load_file_to pic_0, $3000
 	@main_screen_in_ram
 	
+	.ifdef WITH_TUNE
 	lda #0
 	sta timer
 loop
@@ -51,22 +54,30 @@ loop
 	jsr osbyte
 	inc timer
 	bne loop
+	.endif
 	
+	jsr regular_palette_black
 	jsr do_decompress
 
 	.ifdef WITH_TUNE
+
+	jsr extract_palettes_and_blank
+
 	jsr player_vsync_disable
 
 	lda #BANK0
 	sta $f4
 	sta $fe30
-	.endif
 
 	jsr initvsync
 
-	@wait_for $9000
+	jsr fade_in
+	@wait_for $8fc0
+	jsr fade_out
 	
 	jsr deinit_effect
+	jsr regular_palette_black
+
 	jsr player_vsync_enable
 	
 	;; Second pic
@@ -76,13 +87,18 @@ loop
 	@main_screen_in_ram
 	
 	jsr do_decompress
+	jsr extract_palettes_and_blank
 	
 	jsr player_vsync_disable
 	jsr initvsync
 	
-	@wait_for $9100
+	jsr fade_in
+	@wait_for $9140
+	jsr fade_out
 	
 	jsr deinit_effect
+	jsr regular_palette_black
+
 	jsr player_vsync_enable
 
 	;; Third pic
@@ -92,32 +108,37 @@ loop
 	@main_screen_in_ram
 	
 	jsr do_decompress
+	jsr extract_palettes_and_blank
 	
 	jsr player_vsync_disable
 	jsr initvsync
 	
-	@wait_for $9200
+	jsr fade_in
+	@wait_for $92c0
+	jsr fade_out
 	
 	jsr deinit_effect
+	jsr regular_palette_black
+
 	jsr player_vsync_enable
 
-	.if 0
-	;; Fourth pic
-	
-	@shadow_screen_in_ram
-	@load_file_to pic_3, $3000
-	@main_screen_in_ram
-	
-	jsr do_decompress
-	
-	jsr player_vsync_disable
+	.else
+
+	; *** debug code ***
+
+	jsr extract_palettes_and_blank
+
 	jsr initvsync
-	
-	@wait_for $9300
+
+	jsr fade_in
+	jsr fade_out
+
+halt:
+	jmp halt
+
+	; *** debug code ends ***
+
 	.endif
-	
-	jsr deinit_effect
-	jsr player_vsync_enable
 
 	;; Run next effect
 	
@@ -148,22 +169,325 @@ do_decompress:
 	rts
 	.ctxend
 
-	.context wait
-	.var2 time
-wait
-	.(
-loop_for_a_bit
-	lda framectr
+	.macro fade_chunk pal_in pal_out fade_at fade_stop rownum intensity flipmask tmp tmp2
+	; next rows
+	ldy %fade_at
+rown_loop
+	lda #<[16+palette_copy]
+	sta %pal_in
+	lda #>[16+palette_copy]
+	sta %pal_in+1
+	
+	lda #<$2b80
+	sta %pal_out
+	lda #>$2b80
+	sta %pal_out+1
 
+	sty %rownum
+	
+	tya
+	sec
+	sbc %fade_at
+	eor #%flipmask
+	sta %intensity
+
+	ldx #0
+colour_loop
+	lda (%pal_in),y
+	sta %tmp
+	and #$0f
+	eor #7
+	tay
+	lda inv_intens_pal,y
+	sec
+	sbc %intensity
+	bvc skip
+	eor #$80
+skip:
+	bpl no_clamp
+	lda #0
+no_clamp
+	tay
+	lda intens_pal,y
+	sta %tmp2
+	lda %tmp
+	and #$f0
+	ora %tmp2
+	ldy %rownum
+	sta (%pal_out),y
+	
+	lda %pal_in
+	clc
+	adc #128
+	sta %pal_in
+	bcc nohi_1
+	inc %pal_in+1
+nohi_1
+
+	lda %pal_out
+	clc
+	adc #128
+	sta %pal_out
+	bcc nohi_2
+	inc %pal_out+1
+nohi_2
+
+	inx
+	cpx #9
+	bne colour_loop
+
+	iny
+	cpy %fade_stop
+	bne rown_loop
+	.mend
+
+	.context regular_palette_black
+regular_palette_black:
+	ldx #0
+loop
+	txa
+	asl a
+	asl a
+	asl a
+	asl a
+	ora #7
+	sta PALCONTROL
+	inx
+	cpx #16
+	bne loop
+	rts
+	.ctxend
+
+	.context extract_palettes_and_blank
+extract_palettes_and_blank
+	@copy_block_imm palette_copy, $2b70, 9*128+16
+	@zero_block_imm $2b70, 9*128+16
+	rts
+	.ctxend
+
+	.context fade_in
+	.var2 pal_in, pal_out
+	.var tmp, rownum, colournum, intensity, tmp2, fade_at, fade_stop
+fade_in
+	; zero'th row.
+	ldx #0
+row0_loop
+	lda palette_copy,x
+	sta $2b70,x
+	inx
+	cpx #16
+	bne row0_loop
+
+	jsr waitforvsync
+	
+	lda #0
+	sta %fade_at
+fade_loop
+	
+	.(
+	lda %fade_at
+	clc
+	adc #8
+	cmp #127
+	bcc no_clip
+	lda #127
+no_clip
+	sta %fade_stop
+	.)
+	
+	@fade_chunk %pal_in, %pal_out, %fade_at, %fade_stop, %rownum, %intensity, 0, %tmp, %tmp2
+
+	jsr waitforvsync
+
+	inc %fade_at
+	lda %fade_at
+	cmp #127
+	bcc fade_loop
+
+	rts
+	.ctxend
+
+	.context fade_out
+	.var2 pal_in, pal_out
+	.var tmp, rownum, colournum, intensity, tmp2, fade_at, fade_stop
+fade_out
+	; zero'th row.
+	ldx #0
+row0_loop
+	lda palette_copy,x
+	and #$f0
+	ora #7
+	sta $2b70,x
+	inx
+	cpx #16
+	bne row0_loop
+
+	jsr waitforvsync
+	
+	lda #0
+	sta %fade_at
+fade_loop
+	
+	.(
+	lda %fade_at
+	clc
+	adc #8
+	cmp #127
+	bcc no_clip
+	lda #127
+no_clip
+	sta %fade_stop
+	.)
+	
+	@fade_chunk %pal_in, %pal_out, %fade_at, %fade_stop, %rownum, %intensity, 7, %tmp, %tmp2
+
+	jsr waitforvsync
+
+	inc %fade_at
+	lda %fade_at
+	cmp #120
+	bcc fade_loop
+
+	@zero_block_imm $2b80+120, 8
+	@zero_block_imm $2c00+120, 8
+	@zero_block_imm $2c80+120, 8
+	@zero_block_imm $2d00+120, 8
+	@zero_block_imm $2d80+120, 8
+	@zero_block_imm $2e00+120, 8
+	@zero_block_imm $2e80+120, 8
+	@zero_block_imm $2f00+120, 8
+	@zero_block_imm $2f80+120, 8
+
+	rts
+	.ctxend
+
+palette_copy
+	.dsb 9*128+16,0
+
+	.context waitforvsync
+waitforvsync
+	lda framectr
 	.(
 wait_for_vsync
 	cmp framectr
 	beq wait_for_vsync
-	.)
 
-	.ifdef WITH_TUNE
+	phy
+	phx
 	jsr player_poll
-	.endif
+	plx
+	ply
+
+	rts
+	.)
+	.ctxend
+
+	.macro copy_block_imm dst src len
+	lda #<%dst
+	sta %copy_block.outptr
+	lda #>%dst
+	sta %copy_block.outptr+1
+	lda #<%src
+	sta %copy_block.inptr
+	lda #>%src
+	sta %copy_block.inptr+1
+	lda #<%len
+	sta %copy_block.len
+	lda #>%len
+	sta %copy_block.len+1
+	jsr copy_block
+	.mend
+
+	.context copy_block
+	.var2 inptr, outptr, len
+copy_block
+
+copy_pages
+	lda %len+1
+	beq last_part
+
+	ldy #0
+page_loop
+	lda (%inptr),y
+	sta (%outptr),y
+	iny
+	bne page_loop
+	
+	dec %len+1
+	inc %inptr+1
+	inc %outptr+1
+	bra copy_pages
+
+last_part
+	ldy #0
+	cpy %len
+	beq done_copy
+subpage_loop
+	lda (%inptr),y
+	sta (%outptr),y
+	iny
+	cpy %len
+	bne subpage_loop
+done_copy
+	
+	rts
+	.ctxend
+
+	.macro zero_block_imm dst len
+	lda #<%dst
+	sta %zero_block.outptr
+	lda #>%dst
+	sta %zero_block.outptr+1
+	lda #<%len
+	sta %zero_block.len
+	lda #>%len
+	sta %zero_block.len+1
+	jsr zero_block
+	.mend
+
+	.context zero_block
+	.var2 outptr, len
+zero_block
+
+zero_pages
+	lda %len+1
+	beq last_part
+
+	ldy #0
+page_loop
+	lda (%outptr),y
+	and #$f0
+	ora #$07
+	sta (%outptr),y
+	iny
+	bne page_loop
+	
+	dec %len+1
+	inc %outptr+1
+	bra zero_pages
+
+last_part
+	ldy #0
+	cpy %len
+	beq done_zero
+subpage_loop
+	lda (%outptr),y
+	and #$f0
+	ora #$07
+	sta (%outptr),y
+	iny
+	cpy %len
+	bne subpage_loop
+done_zero
+	
+	rts
+	.ctxend
+
+	.context wait
+	.var2 time
+wait:
+loop_a_while:
+	jsr waitforvsync
 
 	sei
 	lda $50
@@ -172,8 +496,8 @@ wait_for_vsync
 	sta playpos_copy+1
 	cli
 	
-	@if_leu_abs playpos_copy, %time, loop_for_a_bit
-	.)
+	@if_leu_abs playpos_copy, %time, loop_a_while
+
 	rts
 	.ctxend
 	
@@ -201,18 +525,18 @@ pic_2
 	.asc "z.parrot",13
 
 intens_pal
-	.byte 0
-	.byte 4
-	.byte 1
-	.byte 5
-	.byte 2
-	.byte 6
-	.byte 3
-	.byte 7
+	.byte 0^7
+	.byte 4^7
+	.byte 1^7
+	.byte 5^7
+	.byte 2^7
+	.byte 6^7
+	.byte 3^7
+	.byte 7^7
 inv_intens_pal
 	.byte 0
 	.byte 2
-	.byte 5
+	.byte 4
 	.byte 6
 	.byte 1
 	.byte 3
@@ -220,7 +544,7 @@ inv_intens_pal
 	.byte 7
 
 next_effect
-	.asc "demo",13
+	.asc "plasma",13
 
 curs1:
 	.word 0
