@@ -22,6 +22,7 @@ header:
 	jmp start_eventv
 	jmp stop_eventv
 	jmp is_finished
+	jmp set_pulser
 
 	.alias tune $8000
 
@@ -676,6 +677,8 @@ nohi:	.)
 	.endif
 	
 finished
+	lda pulser
+	beq no_pulsing
 	lda #10
 	sta CRTC_ADDR
 	ldx beatpos
@@ -685,6 +688,7 @@ finished
 	sta CRTC_ADDR
 	lda #7
 	sta CRTC_DATA
+no_pulsing
 	
 	.)
 	rts
@@ -695,12 +699,33 @@ beat_pulse
 	.byte 7, 7, 7, 7, 7, 7, 7, 5
 	.ctxend
 
-
 	.context is_finished
 is_finished
 	lda tune_finished
 	rts
 	.ctxend
+
+	.context set_pulser
+set_pulser
+	sta pulser
+	beq no_position
+
+	lda #15
+	sta CRTC_ADDR
+	lda #<[$3270/8]
+	sta CRTC_DATA
+
+	lda #14
+	sta CRTC_ADDR
+	lda #>[$3270/8]
+	sta CRTC_DATA
+
+no_position
+	rts
+	.ctxend
+
+pulser
+	.byte 0
 
 	.alias SEI_OP $78
 	.alias CLI_OP $58

@@ -16,10 +16,12 @@ entry_point:
 
 	lda #1
 	jsr mos_setmode
-	jsr mos_cursoroff
+	;jsr mos_cursoroff
 
-	@crtc_write 8, {#0b11000000}
 	@crtc_write 7, {#34}
+
+	lda #1
+	jsr player_pulser
 
 	.ifdef WITH_TUNE
 	;; Nothingth pic
@@ -139,6 +141,10 @@ halt:
 	; *** debug code ends ***
 
 	.endif
+
+	lda #0
+	jsr player_pulser
+	@crtc_write 8, {#0b11000000}
 
 	;; Run next effect
 	

@@ -84,7 +84,7 @@ $BBCIM -new demodisk.ssd
 pushd tmpdisk
 $BBCIM -a ../demodisk.ssd *
 popd
-$BBCIM -80 demodisk.ssd
+# $BBCIM -80 demodisk.ssd
 
 rm -rf "$DEMONAME"
 mkdir "$DEMONAME"
