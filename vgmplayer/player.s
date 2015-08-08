@@ -677,6 +677,7 @@ nohi:	.)
 	.endif
 	
 finished
+	.if 1
 	lda pulser
 	beq no_pulsing
 	lda #10
@@ -689,6 +690,7 @@ finished
 	lda #7
 	sta CRTC_DATA
 no_pulsing
+	.endif
 	
 	.)
 	rts

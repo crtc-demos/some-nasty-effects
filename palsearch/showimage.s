@@ -19,6 +19,8 @@ entry_point:
 	;jsr mos_cursoroff
 
 	@crtc_write 7, {#34}
+	;@crtc_write 8, {#0b11000000}
+	@crtc_write 8, {#0}
 
 	lda #1
 	jsr player_pulser
@@ -372,8 +374,8 @@ palette_copy
 
 	.context waitforvsync
 waitforvsync
-	lda framectr
 	.(
+	lda framectr
 wait_for_vsync
 	cmp framectr
 	beq wait_for_vsync

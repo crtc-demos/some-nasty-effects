@@ -1,1 +1,21 @@
-Demo is not written yet!
+Some Nasty Effects
+==================
+
+A demo for the BBC Master microcomputer by CRTC, August 2015.
+
+Credits
+-------
+
+Code: Puppeh, Joey
+Music: GreaseMonkey, "Sonic Enters a Dance Club"
+
+Tools
+-----
+
+Pasta (assembler)
+6502 gcc (compiler)
+cc65 (assembler)
+BBC micro image converter
+OCaml & Z3 theorem prover (custom media conversion tools)
+LZ4 (compression)
+bbcim (disk image builder)
