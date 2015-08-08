@@ -9,6 +9,8 @@
 
 start:
 	.(
+	;jmp greets_only
+	
 	lda #1
 	jsr mos_setmode
 
@@ -70,17 +72,134 @@ start:
 	jsr plasma_loop
 	jsr deinit_effect
 	
+greets_only
+	; Screen/CPU uses main RAM
+	lda ACCCON
+	and #~5
+	sta ACCCON
+
 	lda #7
 	jsr mos_setmode
+	
+	jsr mos_cursoroff
 
-stop_here
-	jmp stop_here
+	@load_file_to endscreen_name, $7C00
+
+	jsr do_greets
 
 	rts
 	.)
 
+endscreen_name
+	.asc "endscrn",13
+
 rings
 	.asc "z.rings",13
+
+	.alias greet_length 15
+	.alias greet_pos $7c00+15*40+11
+
+	.context do_greets
+	.var2 tmp
+do_greets
+
+loop_greets
+
+	lda #<greetz
+	sta %tmp
+	lda #>greetz
+	sta %tmp+1
+
+next_greet
+	ldy #0
+draw_greet
+	lda (%tmp),y
+	beq loop_greets
+	sta greet_pos,y
+	sta greet_pos+40,y
+	iny
+	cpy #greet_length
+	bne draw_greet
+
+	lda %tmp
+	clc
+	adc #greet_length
+	sta %tmp
+	.(
+	bcc nohi
+	inc %tmp+1
+nohi:	.)
+
+	.(
+	lda #0
+	sta greetcounter
+pause
+	lda #19
+	jsr osbyte
+	inc greetcounter
+	lda greetcounter
+	cmp #60
+	bne pause
+	.)
+
+	ldy #0
+	lda #32
+undraw_greet
+	sta greet_pos,y
+	sta greet_pos+40,y
+	iny
+	cpy #greet_length
+	bne undraw_greet
+
+	.(
+	lda #0
+	sta greetcounter
+pause
+	lda #19
+	jsr osbyte
+	inc greetcounter
+	lda greetcounter
+	cmp #20
+	bne pause
+	.)
+	
+	jmp next_greet
+
+	rts
+	.ctxend
+
+greetcounter
+	.byte 0
+
+greetz
+	.asc "   SUNDOWN X   "
+	.asc "   ] ruairi [  "
+	.asc "   ] crypt [   "
+	.asc "  ] deathboy [ "
+	.asc "     ] df [    "
+	.asc "    ] dfox [   "
+	.asc " ] dotwaffle [ "
+	.asc "    ] doz [    "
+	.asc "    ] fell [   "
+	.asc "   ] gasman [  "
+	.asc "  ] h0ffman [  "
+	.asc "   ] kabuto [  "
+	.asc "   ] madame [  "
+	.asc "   ] megmeg [  "
+	.asc "    ] m0d [    "
+	.asc "    ] ne7 [    "
+	.asc "  ] psonice [  "
+	.asc "  ] reenigne [ "
+	.asc "  ] savannah [ "
+	.asc "] silverlance ["
+	.asc "  ] sunspire [ "
+	.asc "   ] stavs [   "
+	.asc "     ] t$ [    "
+	.asc "   ] topy44 [  "
+	.asc "  ] tunkzor [  "
+	.asc " the RAC (haha)"
+	.asc "+ forgotten ppl"
+	.asc 0
 
 	.alias FROM_SHADOW_RAM -1
 
