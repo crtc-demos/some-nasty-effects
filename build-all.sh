@@ -73,6 +73,10 @@ pushd vgmplayer
 ./compile.sh
 popd
 
+pushd endscreen
+./compile.sh
+popd
+
 rm -f '!boot'
 unix2mac -n 'boot.in' '!boot'
 
