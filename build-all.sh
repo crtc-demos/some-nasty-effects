@@ -36,7 +36,7 @@ export PASTA
 export BBCIM
 export VGMPROC
 
-DEMONAME=chunkydemo
+DEMONAME=somenastyeffects
 
 OUTPUTDISK="$(readlink -f tmpdisk)"
 
